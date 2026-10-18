@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome crawler",
+  "version": "0.6",
+  "author": "ir00nman",
+  "homepage_url": "https://github.com/ir00nman/chrome-crawler",
+  "description": "Chrome crawler — LLM-агент, который выполняет задачи в вашем браузере.",
+  "permissions": ["sidePanel", "scripting", "tabs", "storage", "activeTab", "declarativeNetRequest", "debugger"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "panel/sidepanel.html" },
+  "action": { "default_title": "Chrome crawler" }
+}

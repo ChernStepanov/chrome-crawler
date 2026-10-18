@@ -1,0 +1,149 @@
+/* skript.css — меню «/», чип команды и полоска доступа режима /skript.
+ * Только токены панели (--acc, --r-md, --r-pill и производные): обе темы и авто-палитра работают сами. */
+
+.compose { position: relative; }
+
+.skript-chip-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.skript-chip-row[hidden], .skript-bar[hidden], .skript-menu[hidden], .skript-pop[hidden] { display: none; }
+.skript-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--bd); background: var(--chip); color: var(--txt);
+  border-radius: var(--r-pill); padding: 3px 6px 3px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.skript-chip:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--bd)); }
+.skript-chip .x { color: var(--muted); font-weight: 400; font-size: 14px; line-height: 1; padding: 0 2px; }
+
+.skript-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; gap: 2px;
+  padding: 4px; border-radius: var(--r-md); border: 1px solid var(--bd); background: var(--card); box-shadow: 0 8px 24px var(--scrim); }
+.skript-menu button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; border: 0; background: transparent; color: var(--txt);
+  padding: 7px 10px; border-radius: calc(var(--r-md) - 4px); font-size: 13px; text-align: left; }
+.skript-menu button .hint { color: var(--muted); font-size: 11.5px; }
+.skript-menu button.on { background: var(--accent); color: var(--on-accent); }
+.skript-menu button.on .hint { color: inherit; opacity: .75; }
+
+.skript-bar { display: flex; align-items: center; min-width: 0; }   /* карточка доступа привязана к .compose, как меню «/» */
+.skript-bar.locked { opacity: .55; pointer-events: none; }
+.skript-bar button.preset { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--bd); background: transparent; color: var(--muted);
+  border-radius: var(--r-pill); padding: 3px 9px; font-size: 11.5px; white-space: nowrap; transition: color .15s, border-color .15s; }
+.skript-bar button.preset:hover, .skript-bar button.preset[aria-expanded="true"] { color: var(--txt); border-color: color-mix(in srgb, var(--accent) 55%, var(--bd)); }
+.skript-bar .chev { font-size: 9px; opacity: .7; }
+.skript-bar .warn-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--critical); }
+
+.skript-pop { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 20; padding: 10px 12px; border-radius: var(--r-md);
+  border: 1px solid var(--bd); background: var(--card); box-shadow: 0 8px 24px var(--scrim); display: flex; flex-direction: column; gap: 8px; }
+.skript-pop h4 { margin: 0; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.skript-pop .seg button { min-width: max-content; padding: 4px 9px; font-size: 11.5px; }
+/* Строки одной высоты; выбор из трёх — подпись сверху, сегмент во всю ширину, как пресеты; переключатели по правому краю */
+.skript-pop .acc-list { display: flex; flex-direction: column; gap: 8px; }
+.skript-pop .acc-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 24px; }
+.skript-pop .acc-row.multi { flex-direction: column; align-items: stretch; gap: 5px; }
+.skript-pop .acc-text { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--txt); white-space: nowrap; }
+/* «i» с подсказкой: появляется сразу при наведении, без ожидания системного title */
+.skript-pop .info { position: relative; flex: none; display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%;
+  border: 1px solid var(--bd); color: var(--muted); font: italic 600 9.5px/1 Georgia, serif; cursor: help; outline: 0; }
+.skript-pop .info:hover, .skript-pop .info:focus-visible { color: var(--txt); border-color: color-mix(in srgb, var(--accent) 55%, var(--bd)); }
+.skript-pop .info::after { content: attr(data-tip); position: absolute; left: -4px; top: calc(100% + 6px); z-index: 1; width: max-content; max-width: 230px;
+  padding: 7px 9px; border-radius: var(--r-sm, 10px); border: 1px solid var(--bd); background: var(--card-2, var(--card)); color: var(--txt);
+  box-shadow: 0 6px 18px var(--scrim); font: 400 11.5px/1.4 var(--font); white-space: normal; text-align: left;
+  opacity: 0; visibility: hidden; transform: translateY(-2px); transition: opacity .12s, transform .12s, visibility 0s .12s; pointer-events: none; }
+.skript-pop .info:hover::after, .skript-pop .info:focus-visible::after { opacity: 1; visibility: visible; transform: none; transition: opacity .12s, transform .12s; }
+.skript-pop .remember { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+
+/* ---- Карточка скрипта в логе ---- */
+.skript-card { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--bd); border-radius: var(--r-md); background: var(--card); }
+.skript-card[data-state="running"] { border-color: color-mix(in srgb, var(--accent) 60%, var(--bd)); }
+.skript-card[data-state="fail"] { border-color: color-mix(in srgb, var(--critical) 55%, var(--bd)); }
+.sc-head { display: flex; align-items: baseline; gap: 4px 8px; flex-wrap: wrap; }
+.sc-ver, .sc-runs, .sc-badge, .sc-copy, .sc-dismiss { white-space: nowrap; flex: none; }   /* служебное в шапке не переносится по буквам */
+.sc-title { font-weight: 600; font-size: 13px; }
+.sc-ver { color: var(--muted); font-size: 11.5px; }
+.sc-copy { margin-left: auto; border: 1px solid var(--bd); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: 2px 9px; font-size: 11px; cursor: pointer; }
+.sc-copy:hover { color: var(--txt); border-color: color-mix(in srgb, var(--accent) 55%, var(--bd)); }
+.sc-perms { display: flex; gap: 4px; flex-wrap: wrap; }
+.sc-perm { font-size: 11px; padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid var(--bd); color: var(--muted); }
+.sc-perm.warn { color: var(--txt); border-color: color-mix(in srgb, var(--warn) 70%, var(--bd)); }
+.sc-goal { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.sc-goal-label { font-weight: 600; color: var(--txt); }
+.sc-goal .inp { width: auto; padding: 4px 8px; font-size: 12px; border-radius: var(--r-pill); }
+.sc-goal-target { max-width: 96px; }
+.sc-goal .inp:disabled { opacity: .7; }
+.sc-goal-src { color: var(--muted); font-size: 11px; }
+.sc-code summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.sc-code pre { margin: 6px 0 0; padding: 8px; max-height: 220px; overflow: auto; border-radius: var(--r-sm); background: var(--chip); border: 1px solid var(--bd);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.4; white-space: pre; user-select: text; }
+.sc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.sc-actions .btn { white-space: nowrap; flex: 0 0 auto; }   /* кнопка целиком уходит на новую строку, а не переносит текст */
+
+/* ---- Шапка карточки: счётчик запусков, бейдж итога, «×» (только в доке) ---- */
+.skript-card { outline: 2px solid transparent; outline-offset: 2px; }
+.sc-runs { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.sc-runs:empty, .sc-badge:empty { display: none; }
+.sc-badge { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.skript-card[data-state="ok"] .sc-badge { color: var(--ok); }
+.skript-card[data-state="stopped"] .sc-badge { color: var(--muted); }
+.skript-card[data-state="fail"] .sc-badge { color: var(--critical); }
+.skript-card[data-state="stopped"] .sc-result { color: var(--muted); }
+.sc-dismiss { display: none; border: 0; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: var(--r-pill); }
+.sc-dismiss:hover { color: var(--txt); }
+/* якорь в логе: карточка сейчас у поля ввода */
+.sc-slot { font-size: 11.5px; color: var(--muted); padding: 2px 4px; cursor: pointer; border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.sc-slot:hover { color: var(--txt); }
+/* заменённая версия — одна строка */
+.skript-card.collapsed { padding: 4px 10px; font-size: 11.5px; color: var(--muted); border-style: dashed; }
+
+/* ---- Док над полем ввода: работающий скрипт и его итог, компактно ---- */
+.skript-dock:empty { display: none; }
+.skript-dock .skript-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; padding: 7px 8px 7px 12px; }
+.skript-dock .skript-card > .sc-perms, .skript-dock .skript-card > .sc-goal, .skript-dock .skript-card > .sc-code,
+.skript-dock .sc-copy, .skript-dock .sc-ver { display: none; }
+.skript-dock .sc-dismiss { display: inline-block; margin-left: auto; }
+.skript-dock .skript-card[data-state="running"] .sc-dismiss { display: none; }   /* «×» — только у итога */
+.skript-dock .sc-head { flex-wrap: nowrap; }
+.skript-dock .sc-head { grid-column: 1 / -1; min-width: 0; align-items: center; }
+.skript-dock .sc-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.skript-dock .sc-tele, .skript-dock .sc-result { grid-column: 1; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.skript-dock .sc-actions { grid-column: 2; grid-row: 2; flex-wrap: nowrap; }
+.skript-dock .skript-card[data-state="running"] .sc-actions { grid-row: 1 / span 2; }
+.skript-dock .skript-card[data-state="running"] .sc-head { grid-column: 1; }
+.skript-dock .sc-actions .btn { padding: 4px 9px; font-size: 11px; }
+/* итог: кнопок несколько («Починить», «Запустить снова», «Сохранить для сайта») — отдельной строкой во всю ширину, с переносом */
+.skript-dock .skript-card:not([data-state="running"]) > .sc-result,
+.skript-dock .skript-card:not([data-state="running"]) > .sc-actions { grid-column: 1 / -1; grid-row: auto; }
+.skript-dock .skript-card:not([data-state="running"]) > .sc-actions { flex-wrap: wrap; margin-top: 4px; }
+.sc-actions:empty { display: none; }
+.sc-tele { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sc-result { font-size: 12.5px; }
+.skript-card[data-state="fail"] .sc-result { color: var(--critical); }
+
+/* ---- Предложение «Для этой страницы есть скрипты» (раскрывающаяся карточка, без модалок) ---- */
+.skript-offer { display: flex; flex-direction: column; gap: 6px; }
+.skript-offer[hidden] { display: none; }
+.so-head { display: flex; align-items: center; gap: 4px; }
+.so-toggle { border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--bd)); background: var(--chip); color: var(--txt); border-radius: var(--r-pill);
+  padding: 4px 11px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.so-toggle:hover { border-color: var(--accent); }
+.so-x { border: 0; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: var(--r-pill); cursor: pointer; }
+.so-x:hover { color: var(--txt); }
+.so-list { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--bd); border-radius: var(--r-md); background: var(--card); }
+.so-cap { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin: -2px -2px 0 0; }
+.so-fold { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  padding: 2px 0; cursor: pointer; }
+.so-fold::after { content: ' ˄'; }
+.so-fold:hover { color: var(--txt); }
+.so-row { display: flex; align-items: center; gap: 8px; }
+.so-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.so-title { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.so-meta { font-size: 11px; color: var(--muted); }
+.so-row .btn, .so-foot .btn { padding: 5px 10px; font-size: 11.5px; }
+.so-foot { display: flex; gap: 6px; flex-wrap: wrap; }
+.so-hint { font-size: 11.5px; color: var(--critical); }
+.so-hint:empty { display: none; }
+.sc-actions .btn { padding: 5px 10px; font-size: 11.5px; }
+
+/* ---- Экран «Скрипты сайтов» ---- */
+.lib-h { margin: 12px 0 6px; font-size: 13px; }
+.lib-h:first-child { margin-top: 0; }
+.lib-card { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.lib-card .hint.bad:empty { display: none; }
+.lib-card .skill-actions { margin-top: 0; }
+.lib-empty { margin-bottom: 8px; }
+.lib-prefs { display: flex; align-items: center; gap: 8px; }
+.lib-prefs select { width: auto; }
+.lib-notes { min-height: 70px; }
