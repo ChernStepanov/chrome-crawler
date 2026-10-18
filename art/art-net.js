@@ -443,20 +443,23 @@
     const vs = sh(g.VERTEX_SHADER, `#version 300 es
       in vec2 aPos; in float aSize; in vec4 aCol; in float aShape;
       uniform vec2 uRes;
-      out vec4 vCol; out float vShape;
+      out vec4 vCol; out float vShape; out float vSize;
       void main() {
         vec2 p = aPos / uRes * 2.0 - 1.0;
         gl_Position = vec4(p.x, -p.y, 0.0, 1.0);
         gl_PointSize = aSize;
-        vCol = aCol; vShape = aShape;
+        vCol = aCol; vShape = aShape; vSize = aSize;
       }`);
     const fs = sh(g.FRAGMENT_SHADER, `#version 300 es
       precision mediump float;
-      in vec4 vCol; in float vShape; out vec4 o;
+      in vec4 vCol; in float vShape; in float vSize; out vec4 o;
       void main() {
         vec2 c = gl_PointCoord - 0.5;
         float a;
-        if (vShape < 0.5) { a = 1.0 - smoothstep(0.40, 0.5, length(c)); }               // кружок
+        if (vShape < 0.5) {                                                             // кружок
+          // мелкий (до 4 px): углы полупрозрачные, а не срезаны — иначе 3×3 и 4×4 выходят плюсиком, а не кружком
+          a = vSize < 4.5 ? 1.0 - 0.5 * step(0.45, length(c)) : 1.0 - smoothstep(0.40, 0.5, length(c));
+        }
         else if (vShape > 1.5) { float d = length(c) * 2.0; a = (1.0 - d) * (1.0 - d); }  // мягкий ореол
         else {                                                                         // крестик-блик, тает к концам
           float t = 0.05;
@@ -536,7 +539,9 @@
 
   function render(now) {
     const { w, h, dpr } = layout();
-    const cell = CELL * dpr;
+    // шаг сетки — целое число пикселей экрана: при масштабе Windows 125/150/175% дробный шаг (3,125 / 3,75 px)
+    // давал дробные кружки, видеокарта рисовала их то на 2, то на 3 пикселя — узлы выходили «дырявыми»
+    const cell = Math.max(2, Math.round(CELL * dpr));
     // отъезд камеры — ease-out: быстрый старт и плавная посадка на место
     const zt = Math.min(1, Math.max(0, aliveT(now) / ALIVE_S));
     const zoom = reduce() ? 1 : 1 + ZOOM_IN * Math.pow(1 - zt, 3);
@@ -839,7 +844,9 @@
     setGlow(cx, cy, R * 0.9 * (0.9 + 0.1 * mood.core), ar, ag, ab,
       0.16 * ease(assemble) * mood.core * (1 + 0.2 * Math.sin(time * 3.2) * Math.max(0, mood.core - 1.2)) * dim, dpr);
     // клетки: ближнее светлее (к белому), дальнее тусклее; импульсы — почти белые
-    const dot = Math.max(1.2, Math.round(cell * 0.72 * 2) / 2);   // диаметр кружка клетки
+    // кружок клетки — тоже целый и стоит ровно на пиксельной сетке: каждый закрашивает одинаковый сплошной блок
+    const dot = Math.max(1, Math.round(cell * 0.72)), dotHot = Math.max(dot + 1, Math.round(dot * 1.35));
+    const off = Math.floor((cell - dot) / 2) + dot / 2, offHot = Math.floor((cell - dotHot) / 2) + dotHot / 2;
     const AR = ar / 255, AG = ag / 255, AB = ab / 255, GW2 = G.gw;
     // ореолы под искрами и сработавшими синапсами (рисуются первыми — головки остаются чёткими поверх)
     for (const hl of halos) emit(hl[0], hl[1], hl[2], AR + (1 - AR) * 0.6, AG + (1 - AG) * 0.6, AB + (1 - AB) * 0.6, 0.22 * hl[3], 2);
@@ -851,9 +858,9 @@
       const line = v >= 0.95 && !hot;                                     // связи и узлы — ярче фона
       const mix = hot ? 0.9 : near * (line ? 0.6 : 0.4);                  // доля белого
       const gx = (k % GW2) - 1, gy = ((k / GW2) | 0) - 1;
-      const x = gx * cell + cell / 2, y = gy * cell + cell / 2;
+      const x = gx * cell + off, y = gy * cell + off;
       if (v >= 1.7) {                                                     // головка искры / сработавший синапс — поверх затемнения
-        emit(x, y, dot * 1.35, AR + (1 - AR) * 0.95, AG + (1 - AG) * 0.95, AB + (1 - AB) * 0.95, 1, 0);
+        emit(gx * cell + offHot, gy * cell + offHot, dotHot, AR + (1 - AR) * 0.95, AG + (1 - AG) * 0.95, AB + (1 - AB) * 0.95, 1, 0);
         continue;
       }
       const alpha = Math.max(0.12, Math.min(1, (0.25 + near * 0.75) * Math.min(1, v) * (line ? 1.15 : 1)));
@@ -873,7 +880,8 @@
         if (f <= 0) continue;
         const tx = d.x * dpr, ty = d.y * dpr;
         const x = cx + (tx - cx) * f, y = cy + (ty - cy) * f - Math.sin(Math.PI * f) * d.arc * dpr;
-        emit(x, y, f > 0.97 ? size : size * 1.15, AR2, AG2, AB2, f > 0.97 ? 1 : 0.85, 0);
+        const sz = f > 0.97 ? size : dotHot;                              // на пиксельной сетке, как клетки сети
+        emit(Math.round(x - sz / 2) + sz / 2, Math.round(y - sz / 2) + sz / 2, sz, AR2, AG2, AB2, f > 0.97 ? 1 : 0.85, 0);
       }
       if (k > back + SAY_IN_MAX) { say = null; react('accepted'); }
     }
@@ -1068,27 +1076,28 @@
     if (!canvas || reduce() || !model) return false;
     const { w, h, dpr } = layout();
     const cssW = w / dpr, cssH = h / dpr;
+    const P = Math.max(2, Math.round(CELL * dpr)) / dpr;          // шаг — тот же целый шаг сетки, что у сети в render (CSS px)
     const glyph = (ch) => DOT_FONT[ch] || DOT_FONT[ch.toUpperCase()] || null;
     const width = (word) => [...word].reduce((n, ch, i) => n + (glyph(ch)?.w ?? DOT_SPACE) + (i ? DOT_GAP : 0), 0);
     // перенос по словам под ширину холста (в клетках)
-    const maxW = Math.floor((cssW - 28) / CELL), lines = [];
+    const maxW = Math.floor((cssW - 28) / P), lines = [];
     for (const word of String(text).replace(/…/g, '...').split(/\s+/).filter(Boolean)) {
       const cur = lines.length ? lines[lines.length - 1] : null;
       if (cur !== null && width(cur) + DOT_SPACE + 2 * DOT_GAP + width(word) <= maxW) lines[lines.length - 1] = cur + ' ' + word;
       else lines.push(word);
     }
     if (!lines.length) return false;
-    // место: по центру, под ядром (как в render: cy = 0,46 высоты, R — радиус сети); сетка — шаг CELL
+    // место: по центру, под ядром (как в render: cy = 0,46 высоты, R — радиус сети); сетка — шаг P
     const R = Math.min(cssW, cssH * 0.92) * 0.36, bh = (lines.length - 1) * DOT_LINE + 7;
-    const oy = Math.min(cssH * 0.46 + R * 1.02 + 14, cssH - bh * CELL - 10);
+    const oy = Math.min(cssH * 0.46 + R * 1.02 + 14, cssH - bh * P - 10);
     const dots = [];
     let order = 0;
     lines.forEach((line, li) => {
-      let gx = Math.round((cssW / CELL - width(line)) / 2);
+      let gx = Math.round((cssW / P - width(line)) / 2);
       for (const ch of line) {
         const g = glyph(ch);
         for (const [x, y] of g ? g.pts : [])
-          dots.push({ x: (gx + x + 0.5) * CELL, y: oy + (li * DOT_LINE + y + 0.5) * CELL,
+          dots.push({ x: (gx + x + 0.5) * P, y: oy + (li * DOT_LINE + y + 0.5) * P,
             d0: order * SAY_CHAR + Math.random() * 40, d1: Math.random() * SAY_JITTER, arc: (Math.random() - 0.5) * 22 });
         gx += (g ? g.w : DOT_SPACE) + DOT_GAP;
         order++;
