@@ -129,6 +129,18 @@
   .pill.stat { border: 0; padding: 3px 2px; font-size: 11px; display: none; flex: none; }
   body.has-run .pill.stat { display: inline-flex; }
   .chips .view-tabs { flex: none; }
+  /* «Доступно обновление» */
+  .pill.update { flex: none; color: var(--acc); border-color: color-mix(in srgb, var(--acc) 55%, var(--bd)); background: color-mix(in srgb, var(--acc) 12%, transparent); font-weight: 600; cursor: pointer; }
+  .pill.update[hidden] { display: none; }
+  .update-card { margin: 0 0 8px; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid color-mix(in srgb, var(--acc) 40%, var(--bd));
+    background: color-mix(in srgb, var(--acc) 8%, var(--card)); font-size: 12.5px; display: flex; flex-direction: column; gap: 8px; }
+  .update-card[hidden] { display: none; }
+  .uc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .uc-msg { white-space: pre-wrap; color: var(--muted); max-height: 7.5em; overflow: auto; }
+  .uc-msg:empty { display: none; }
+  .uc-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+  .uc-steps code { font-size: 11.5px; }
+  .uc-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: var(--r-pill); border: 1px solid var(--bd); background: transparent; font-size: 11px; color: var(--muted); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill.model { color: var(--txt); background: var(--card); }
   .pill.model:hover { border-color: var(--accent); }
@@ -533,6 +545,7 @@
   </header>
 
   <div class="chips">
+    <button class="pill update" id="updatePill" type="button" hidden title="Доступна новая версия на GitHub" aria-expanded="false" aria-controls="updateCard"></button>
     <button class="pill model" id="modelChip" type="button">выберите модель</button>
     <span class="pill stat" id="pillTokens">0 ток.</span>
     <span class="pill stat" id="pillTime">0 с</span>
@@ -542,6 +555,21 @@
     <div class="view-tabs" role="tablist" aria-label="Вид панели">
       <button id="tabActions" type="button" role="tab" aria-selected="true" aria-controls="log" class="on">Действия</button>
       <button id="tabChat" type="button" role="tab" aria-selected="false" aria-controls="chatLog">Чат</button>
+    </div>
+  </div>
+  <!-- «Доступно обновление»: раскрывается по клику на пилюлю (не модальное окно) -->
+  <div class="update-card" id="updateCard" hidden>
+    <div class="uc-head"><strong id="ucTitle"></strong><button class="mini" id="ucClose" type="button" aria-label="Скрыть до следующей версии" title="Скрыть до следующей версии"><svg class="ic"><use href="#i-x"/></svg></button></div>
+    <div class="uc-msg" id="ucMsg"></div>
+    <ol class="uc-steps">
+      <li>Скачайте ZIP и распакуйте.</li>
+      <li>Замените файлы в папке расширения новыми (настройки, ключи и скрипты хранятся в браузере — не пропадут). Если ставили через git — <code>git pull</code>.</li>
+      <li>Нажмите «Перезапустить расширение».</li>
+    </ol>
+    <div class="uc-actions">
+      <button class="btn primary" id="ucZip" type="button">Скачать ZIP</button>
+      <button class="btn" id="ucPage" type="button">Открыть на GitHub</button>
+      <button class="btn" id="ucReload" type="button">Перезапустить расширение</button>
     </div>
   </div>
 
@@ -720,6 +748,7 @@
 <script src="../page/extract-items.js"></script>
 <script src="attachments.js"></script>
 <script src="agent-loop.js"></script>
+<script src="updates.js"></script>
 <script src="tour.js"></script>
 <script src="model-switch.js"></script>
 <script src="sidepanel.js"></script>

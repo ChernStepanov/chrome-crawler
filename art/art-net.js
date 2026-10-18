@@ -13,7 +13,7 @@
 // пакетами по линиям в сеть, затем отключается — и из принявших вершин разбегаются искры «думает».
 // Пока модель работает, к новым строкам лога (действия, ошибки, карточки скриптов) сеть на миг цепляется одним щупальцем.
 // Взаимодействие с пользователем: печатаете — от поля ввода к сети бегут искры («слушает»), «/» — настроение скрипта;
-// клик по пустому экрану — пульс: волна по сети от ядра; минуту без
+// клик по пустому экрану — пульс: волна по сети от ядра; зажать ЛКМ — сеть хватает курсор нитями; минуту без
 // действий — засыпает (тускнеет, медленно дышит), просыпается от курсора/клавиш; ждёт подтверждения — тянется к
 // кнопкам; прогресс задачи — доля подсвеченных вершин; react(kind) — реакции панели: approve (зелёная вспышка),
 // deny/bad/error (вздрагивает), good (тёплая волна), stop (сжимается и замирает), tab (осматривается),
@@ -150,6 +150,10 @@
   let activeAt = performance.now(), sleep = 0;
   // ждёт подтверждения: щупальца к кнопкам вопроса
   let askLinks = null;
+  // Хватает курсор: зажали ЛКМ на пустом поле дольше GRAB_DELAY — от трёх ближайших вершин к курсору тянутся нити,
+  // сеть чуть тянется следом; отпустили — нити втягиваются, короткая волна. Короткий клик — по-прежнему пульс.
+  const GRAB_DELAY = 180, GRAB_GROW = 220, GRAB_RELEASE = 320;
+  let grab = null, lean = { x: 0, y: 0 }, grabbedClick = false;
   // щупальца на страницу (tentacles.js): пучок из ядра к левому краю холста — за ним вкладка, там щупальца продолжаются.
   // Фазы как на странице: выход → выкачивание (сгустки бегут с края в ядро) → втягивание.
   const OUT_REACH = 320, OUT_SUCK = 1700, OUT_RETRACT = 420, OUT_STAGGER = 130;
@@ -550,7 +554,13 @@
     if (squeeze && sq >= 1) squeeze = null;
     // сжатие: быстро внутрь (первые 18%), долго обратно
     const shrinkK = squeeze ? squeeze.amt * (sq < 0.18 ? smooth(sq / 0.18) : 1 - smooth((sq - 0.18) / 0.82)) : 0;
-    const cx = w / 2, cy = h * 0.46, R = Math.min(w, h * 0.92) * 0.36 * zoom * (1 - shrinkK);
+    // схватил курсор — сеть чуть тянется к нему (плавно; отпустили — возвращается)
+    let gpx = 0, gpy = 0;
+    if (grab) { const gr = canvas.getBoundingClientRect(); gpx = (grab.x - gr.left) * dpr; gpy = (grab.y - gr.top) * dpr; }
+    const leanOn = grab && grab.active && !grab.releasedAt;
+    lean.x += ((leanOn ? (gpx - w / 2) * 0.06 : 0) - lean.x) * 0.12;
+    lean.y += ((leanOn ? (gpy - h * 0.46) * 0.06 : 0) - lean.y) * 0.12;
+    const cx = w / 2 + lean.x, cy = h * 0.46 + lean.y, R = Math.min(w, h * 0.92) * 0.36 * zoom * (1 - shrinkK);
     // волны от ядра: фронт в единицах модели (0 — ядро, ~1.1 — край)
     waves = waves.filter((wv) => now - wv.start < WAVE_MS);
     const fronts = waves.map((wv) => [Math.max(0, now - wv.start) / WAVE_MS * 1.35, wv.str]);
@@ -752,6 +762,45 @@
       listens = listens.filter((ls) => !ls.done);
     }
 
+    // схваченный курсор: нити от трёх ближайших вершин, сгустки бегут к курсору, у курсора — пульсирующий сгусток
+    if (grab && !grab.active && !grab.releasedAt && now - grab.down > GRAB_DELAY) {
+      grab.active = true;
+      document.body.style.cursor = 'grabbing';
+    }
+    if (grab && grab.active) {
+      let reach = grab.releasedAt ? 1 - Math.min(1, Math.max(0, (now - grab.releasedAt) / GRAB_RELEASE))
+        : ease(Math.min(1, Math.max(0, (now - grab.down - GRAB_DELAY) / GRAB_GROW)));
+      if (grab.releasedAt && reach <= 0) grab = null;
+      else {
+        if (!grab.nodes) {
+          grab.nodes = model.nodes.map((n, i) => { const q = project(n.x, n.y, n.z); return { i, d: Math.hypot(q.px - gpx, q.py - gpy) }; })
+            .sort((a, b) => a.d - b.d).slice(0, 3).map((x) => x.i);
+          grab.nodes.forEach((i) => { model.nodes[i].fireAt = now; });
+        }
+        grab.nodes.forEach((ni, gi) => {
+          const n = model.nodes[ni], q = project(n.x, n.y, n.z);
+          const len = Math.hypot(gpx - q.px, gpy - q.py), steps = Math.max(4, Math.round(len / cell));
+          const nx = -(gpy - q.py) / (len || 1), ny = (gpx - q.px) / (len || 1);
+          const sag = Math.sin(time * 3 + gi * 2.1) * 0.06 * len;    // нить чуть провисает и «дышит»
+          const pt = (t) => [q.px + (gpx - q.px) * t + nx * sag * Math.sin(Math.PI * t), q.py + (gpy - q.py) * t + ny * sag * Math.sin(Math.PI * t)];
+          for (let k = 0; k <= steps * reach; k++) {
+            const t = k / steps;
+            if (k % 2 && t < reach - 0.05) continue;
+            const [x, y] = pt(t);
+            put(Math.floor(x / cell), Math.floor(y / cell), t > reach - 0.05 ? 1.6 : 1.05, -0.7);
+          }
+          if (reach >= 1) for (let j = 0; j < 2; j++) {           // сгустки бегут от вершины к курсору
+            const [x, y] = pt((time * 1.4 + j / 2 + gi * 0.23) % 1);
+            put(Math.floor(x / cell), Math.floor(y / cell), 1.75, -0.8);
+          }
+          if (reach >= 1 && Math.random() < 0.02) n.fireAt = now;
+        });
+        // у курсора — сгусток пикселей
+        const pr = (1.6 + Math.sin(time * 9) * 0.5) * reach, g0x = Math.floor(gpx / cell), g0y = Math.floor(gpy / cell);
+        for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) if (dx * dx + dy * dy <= pr * pr) put(g0x + dx, g0y + dy, 1.55, -0.8);
+      }
+    }
+
     // ждёт подтверждения: от двух ближайших вершин — пульсирующие линии к кнопкам вопроса
     const askEl = document.getElementById('ask');
     if (moodName === 'awaiting_confirmation' && askEl && !askEl.hidden) {
@@ -935,6 +984,10 @@
     buildStars();
     document.addEventListener('click', onPoke, true);
     document.addEventListener('click', onBrainClick);
+    document.addEventListener('pointerdown', onGrabDown);
+    document.addEventListener('pointermove', onGrabMove, { passive: true });
+    for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, onGrabUp);
+    addEventListener('blur', onGrabUp);
     for (const ev of ['pointermove', 'keydown', 'pointerdown', 'wheel', 'focusin']) document.addEventListener(ev, wake, { passive: true, capture: true });
     document.addEventListener('input', onType, true);
     new MutationObserver(onMessages).observe(document.body, { childList: true, subtree: true });
@@ -991,11 +1044,32 @@
     } catch (err) { return null; }
   }
   // Клик по пустому экрану (сеть видна целиком, задача не идёт): пульс — волна от ядра и короткий подкрут.
-  function onBrainClick(e) {
+  function onBrainField(e) {                                     // клик/нажатие по пустому полю мозга (задача не идёт)
     const stage = canvas && canvas.parentElement;
-    if (!stage || stage.classList.contains('has-content') || document.body.classList.contains('running')) return;
-    if (e.target !== stage && e.target !== canvas && e.target.id !== 'log' && e.target.id !== 'chatLog') return;
-    if (!reduce()) { wave(1); pokeAt = performance.now(); pokeSeed++; }
+    if (!stage || stage.classList.contains('has-content') || document.body.classList.contains('running')) return false;
+    return e.target === stage || e.target === canvas || e.target.id === 'log' || e.target.id === 'chatLog';
+  }
+  function onBrainClick(e) {
+    if (grabbedClick) { grabbedClick = false; return; }              // это было «схватить и отпустить», а не клик
+    if (onBrainField(e) && !reduce()) { wave(1); pokeAt = performance.now(); pokeSeed++; }
+  }
+  // Зажали ЛКМ на поле мозга: через GRAB_DELAY сеть «хватает» курсор (см. render), отпустили — отпускает.
+  function onGrabDown(e) {
+    if (e.button !== 0 || reduce() || !onBrainField(e)) return;
+    e.preventDefault();                                              // без выделения текста при перетаскивании
+    grab = { x: e.clientX, y: e.clientY, down: performance.now(), active: false, nodes: null, releasedAt: 0 };
+  }
+  function onGrabMove(e) { if (grab && !grab.releasedAt) { grab.x = e.clientX; grab.y = e.clientY; } }
+  function onGrabUp() {
+    if (!grab) return;
+    if (!grab.active) { grab = null; return; }                       // короткий клик — пульс сделает onBrainClick
+    if (!grab.releasedAt) {
+      grab.releasedAt = performance.now();
+      grabbedClick = true;
+      setTimeout(() => { grabbedClick = false; }, 80);              // клик после отпускания может и не прийти
+      document.body.style.cursor = '';
+      wave(0.6); pokeAt = grab.releasedAt; pokeSeed++;
+    }
   }
   // Реакции на события панели.
   function react(kind) {

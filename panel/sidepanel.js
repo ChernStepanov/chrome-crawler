@@ -2597,6 +2597,35 @@ function logAsText() {
   return lines.join('\n');
 }
 
+// ---------- Доступно обновление ----------
+// Версия в main на GitHub новее — пилюля в шапке, по клику карточка: что нового, ZIP, инструкция, перезапуск.
+// «×» — скрыть до следующей версии. Сама замена файлов — вручную (распакованное расширение не может обновить себя).
+async function checkUpdates(force = false) {
+  const u = await Updates.check({
+    manifest: chrome.runtime.getManifest(), fetch: (url, o) => fetch(url, o),
+    storage: { get: (d) => chrome.storage.local.get(d), set: (o) => chrome.storage.local.set(o) }, now: () => Date.now()
+  }, { force }).catch(() => null);
+  const { updateDismissed = '' } = await chrome.storage.local.get({ updateDismissed: '' });
+  const show = !!u && u.version !== updateDismissed;
+  $('updatePill').hidden = !show;
+  if (!show) { $('updateCard').hidden = true; return; }
+  $('updatePill').textContent = `↑ ${u.version}`;                      // коротко: ряд в шапке узкий
+  $('updatePill').title = `Доступно обновление ${u.version} (у вас ${u.current}) — нажмите`;
+  $('ucTitle').textContent = `Доступна версия ${u.version} (у вас ${u.current})`;
+  $('ucMsg').textContent = u.message;
+  $('ucZip').onclick = () => chrome.tabs.create({ url: u.zip });
+  $('ucPage').onclick = () => chrome.tabs.create({ url: u.page });
+  $('ucClose').onclick = async () => { await chrome.storage.local.set({ updateDismissed: u.version }); checkUpdates(); };
+}
+$('updatePill').onclick = () => {
+  const open = $('updateCard').hidden;
+  $('updateCard').hidden = !open;
+  $('updatePill').setAttribute('aria-expanded', String(open));
+};
+$('ucReload').onclick = () => chrome.runtime.reload();
+checkUpdates();
+setInterval(checkUpdates, Updates.CHECK_MS);
+
 // ---------- Инициализация ----------
 $('btnSettings').onclick = () => openSheet('settings');
 $('btnTour').onclick = () => { closeSheet('settings'); Tour.start(); };
