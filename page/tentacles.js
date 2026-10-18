@@ -99,18 +99,45 @@
   }
 
   // ---------- Цвет ----------
+  // Акцент панели при автопалитре — это цвет самого сайта: без поправки щупальце сливается со страницей.
+  // Поэтому тело подгоняется по яркости до контраста ≥ 3:1 с фоном страницы, «сок» (сгустки, присоски) —
+  // ещё контрастнее, а под каждой точкой — тонкий ободок противоположной яркости (читается и поверх картинок).
+  let bg = [255, 255, 255], rim = 'rgba(0,0,0,0.3)';
   const mix = (c, m) => (dark ? c.map((v) => v + (255 - v) * m) : c.map((v) => v * (1 - m * 0.45))).map(Math.round);
-  const light = (m) => acc.map((c) => Math.round(c + (255 - c) * m));
+  const light = (m) => (dark ? acc.map((c) => c + (255 - c) * m) : acc.map((c) => c * (1 - m * 0.6))).map(Math.round);   // «сок»: на тёмном — к белому, на светлом — глубже
   const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
-  // тёмная ли страница — по фону body/html (на неё ложатся щупальца, а не на панель)
-  function pageIsDark() {
-    for (const el of [document.body, document.documentElement]) {
-      const m = el && getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)/);
-      if (!m) continue;
-      const [r, g, b, a = 1] = m[1].split(/[ ,/]+/).map(Number);
-      if (a > 0.5) return r * 0.299 + g * 0.587 + b * 0.114 < 110;
+  const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+  const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const parseBg = (el) => {
+    const m = el && getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const [r, g, b, a = 1] = m[1].split(/[ ,/]+/).map(Number);
+    return a > 0.5 ? [r, g, b] : null;
+  };
+  // фон страницы там, где щупальца: элемент в центре экрана и его родители (у многих сайтов body прозрачный,
+  // фон задан на обёртке), иначе body/html, иначе белый
+  // busy — фон задан картинкой/градиентом (сплошного цвета нет): яркость фона заранее не известна
+  function pageBg() {
+    let el = document.elementFromPoint(innerWidth * 0.5, innerHeight * 0.5), busy = false;
+    for (let i = 0; el && i < 25; i++, el = el.parentElement) {
+      const c = parseBg(el);
+      if (c) return { c, busy };
+      if (getComputedStyle(el).backgroundImage !== 'none') busy = true;
     }
-    return false;
+    for (const e of [document.body, document.documentElement]) {
+      const c = e && parseBg(e);
+      if (c) return { c, busy };
+      if (e && getComputedStyle(e).backgroundImage !== 'none') busy = true;
+    }
+    return { c: [255, 255, 255], busy };
+  }
+  // поправить яркость цвета до нужного контраста с фоном (на светлом — темнее, на тёмном — светлее)
+  function withContrast(c, min) {
+    for (let m = 0; m <= 1.001; m += 0.08) {
+      const x = (dark ? c.map((v) => v + (255 - v) * m) : c.map((v) => v * (1 - m))).map(Math.round);
+      if (contrast(x, bg) >= min) return x;
+    }
+    return dark ? [255, 255, 255] : [0, 0, 0];
   }
 
   // ---------- Геометрия ----------
@@ -237,7 +264,18 @@
     if (Array.isArray(color)) acc = color;
     if (STYLES[st]) style = st;
     exitY = Math.max(24, Math.min(innerHeight - 24, typeof fromBottom === 'number' ? innerHeight - fromBottom : innerHeight * 0.45));
-    dark = pageIsDark();
+    const pb = pageBg();
+    bg = pb.c;
+    if (pb.busy) {
+      // пёстрый фон (картинка, градиент): глубокое тёмное тело + плотный белый ободок — читается на любом цвете
+      bg = [255, 255, 255]; dark = false;
+      acc = withContrast(acc, 6);
+      rim = 'rgba(255,255,255,0.85)';
+    } else {
+      dark = lum(bg) < 0.25;
+      acc = withContrast(acc, 3);                                 // тело — не меньше 3:1 к фону страницы
+      rim = dark ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.6)'; // ободок — противоположной яркости
+    }
   }
 
   // Один заход: до MAX щупалец разом, каждое держит T_SUCK. fromBottom — расстояние от мозга до низа панели:
@@ -352,9 +390,15 @@
     };
     const paint = (alphaMul = 1) => {
       const cr = GRID * 0.4;
+      // ободок под телом: отделяет щупальце от пёстрого фона (картинки, баннеры)
+      ctx.fillStyle = rim;
+      for (const [v, , cx, cy] of cells.values()) {
+        ctx.globalAlpha = alphaMul;
+        ctx.beginPath(); ctx.arc(cx, cy, (v > 1.15 ? cr * 1.25 : cr) + 0.9, 0, 6.2832); ctx.fill();
+      }
       for (const [v, t, cx, cy] of cells.values()) {
         ctx.globalAlpha = Math.min(1, 0.45 + 0.55 * v) * alphaMul;
-        // сгустки и кончики — светлый «сок» (к белому в любой теме страницы), тело — акцент
+        // сгустки и кончики — «сок» (контрастнее тела), тело — акцент, поправленный под фон
         ctx.fillStyle = rgb(v > 1.15 ? light(0.55) : mix(acc, t * 0.5));
         ctx.beginPath(); ctx.arc(cx, cy, v > 1.15 ? cr * 1.25 : cr, 0, 6.2832); ctx.fill();
       }

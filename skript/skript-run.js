@@ -198,24 +198,38 @@ const SkriptRun = (() => {
     const perms = d.permissions.filter((p) => p !== 'input' || grants.act);
     let origin = '';
     try { origin = new URL(await deps.tabUrl(st.tabId)).origin; } catch (e) { /* служебная страница */ }
-    card.running(() => runner.stop('manual'));
+    // своя ссылка на карточку: по «Стоп» задача завершается сразу и обнуляет общую card (end), а раннер
+    // дозакрывает карточку позже — через общую переменную карточка оставалась «работающей» навсегда
+    const c = card;
+    c.running(() => runner.stop('manual'));
     const signal = deps.signal();
     const onAbort = () => runner.stop('aborted');
     if (signal) signal.addEventListener('abort', onAbort);
     const y0 = await pageScrollY(st.tabId);
     const reader = startGoalReader(st.tabId, d.goal);
     let s;
+    deps.onScript?.(true);                                           // скрипт работает — панель убирает щупальца со страницы
     try { s = await runner.run({ code: d.code, args: args || {}, approved: true, permissions: perms, expectedOrigin: origin }); }
-    finally { if (signal) signal.removeEventListener('abort', onAbort); }
+    finally { if (signal) signal.removeEventListener('abort', onAbort); deps.onScript?.(false); }
+    if (s.reason === 'aborted' || (signal && signal.aborted)) {
+      // задача остановлена: панель уже завершает её и отключает отладчик — замеры страницы не делаем,
+      // карточку закрываем сразу («■ остановлен»), кнопки «Запустить снова»/«Сохранить» — на месте
+      reader.stop().catch(() => {});
+      lastSummary = s;
+      c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(runner)}`, 'stopped');
+      offerAfter({ title: d.title, description: d.description, code: d.code, permissions: d.permissions.slice(), origin, goal: d.goal,
+        savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode }, c, st.tabId, s);
+      return { text: summaryText(s, d) };
+    }
     const samples = await reader.stop();
     const y1 = await pageScrollY(st.tabId);
     lastSummary = s;
     const book = ledger || (ledger = SkriptEval.createLedger());
     const ev = book.record(d, s, samples, { scrolled: y0 !== null && y1 !== null && s.actions > 0 && Math.abs(y1 - y0) >= 100 });
-    card.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(runner)} · ${SkriptEval.line(ev, book)}`, finishState(s, ev.reached));
+    c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(runner)} · ${SkriptEval.line(ev, book)}`, finishState(s, ev.reached));
     // Копия кода на момент запуска: последующие патчи модели её не меняют.
     offerAfter({ title: d.title, description: d.description, code: d.code, permissions: d.permissions.slice(), origin, goal: d.goal,
-      savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode }, card, st.tabId, s);
+      savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode }, c, st.tabId, s);
     return { text: summaryText(s, d) + scrollHint(y0, y1, s) + SkriptEval.text(ev, book) };
   }
 
@@ -230,7 +244,10 @@ const SkriptRun = (() => {
     if (run.running) await run.stop('manual');
     card = c; // живая телеметрия идёт в эту карточку
     c.running(() => run.stop('manual'));
-    const s = await run.run({ code: item.code, args: {}, approved: true, permissions: item.permissions, expectedOrigin: origin });
+    deps.onScript?.(true);
+    let s;
+    try { s = await run.run({ code: item.code, args: {}, approved: true, permissions: item.permissions, expectedOrigin: origin }); }
+    finally { deps.onScript?.(false); }
     lastSummary = s;
     c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(run)}`, finishState(s));
     if (item.savedId && typeof SkriptStore !== 'undefined') SkriptStore.recordRun(item.savedId, s.ok).catch(() => {});
@@ -367,10 +384,11 @@ const SkriptRun = (() => {
       }
     }
     showCard(d);
-    const decision = await card.ask(deps.signal());
-    if (decision === 'abort') { card.finish('Остановлено', 'stopped'); return { text: 'Task stopped by the user.' }; }
+    const asked = card;                                              // своя ссылка: по «Стоп» общая card обнуляется (end)
+    const decision = await asked.ask(deps.signal());
+    if (decision === 'abort') { asked.finish('Остановлено', 'stopped'); return { text: 'Task stopped by the user.' }; }
     if (decision === 'reject') {
-      card.finish('Отклонено вами', false);
+      asked.finish('Отклонено вами', false);
       return { text: 'The user rejected this script; nothing was run. Ask what to change, patch it, or finish with done.' };
     }
     drafts.approve(d.id);
@@ -445,7 +463,12 @@ const SkriptRun = (() => {
     },
     promptAddon: () => repairNote,
     prepareRepair,
-    async end() { if (runner && runner.running) await runner.stop('aborted'); drafts = null; ledger = null; card = null; repairNote = ''; },
+    async end() {
+      if (runner && runner.running) await runner.stop('aborted');
+      // на всякий случай: карточка, оставшаяся «работающей» (таймер, кнопка стопа, анимация мозга), — закрыть
+      if (card && card.root && card.root.dataset.state === 'running') card.finish('Остановлено вместе с задачей', 'stopped');
+      drafts = null; ledger = null; card = null; repairNote = '';
+    },
     // «Новый запуск»: лог очищен — карточек больше нет, реестр пуст.
     resetCards() { cards.clear(); draftCards.clear(); card = null; },
     handle,

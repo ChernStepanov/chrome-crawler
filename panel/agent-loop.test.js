@@ -100,4 +100,21 @@ assert.match(L.clickAtText(5, 5, { ok: false }), /nothing was found at that poin
   assert.equal(L.listify(prose), prose);
 }
 
+// ---- 6. Список не в том поле (живой прогон Авито: в ответе только заголовок, список — в пояснении) ----
+{
+  const r = L.salvageList('Топ-5 самых дешёвых объявлений Pinarello Dogma',
+    'Отсортировал выдачу по цене.\n1. Pinarello Dogma 2 — 74 900 ₽\n2. Dogma 65.1 Disk — 88 350 ₽\nРамы исключил.', '');
+  assert.match(r.answer, /^Топ-5 самых дешёвых объявлений Pinarello Dogma\n- Pinarello Dogma 2 — \*\*74 900 ₽\*\*\n- Dogma 65\.1 Disk — \*\*88 350 ₽\*\*$/, 'строки списка — в ответ');
+  assert.equal(r.reasoning, 'Отсортировал выдачу по цене.\nРамы исключил.', 'из пояснения убраны — без дубля');
+  // список «в строку» тоже находится
+  assert.match(L.salvageList('Топ-2:', 'Нашёл: 1) Dogma F — 210 000 ₽; 2) Dogma F12 — 299 000 ₽', '').answer, /- Dogma F — \*\*210 000 ₽\*\*\n- Dogma F12/);
+  // в ответе уже есть список — ничего не трогаем
+  const ok = L.salvageList('- Dogma 2 — **74 900 ₽**', '1. X — 1 000 ₽\n2. Y — 2 000 ₽', '');
+  assert.equal(ok.answer, '- Dogma 2 — **74 900 ₽**');
+  assert.equal(ok.reasoning, '1. X — 1 000 ₽\n2. Y — 2 000 ₽');
+  // одна строка с ценой в пояснении — не список, не трогаем; список в summary — тоже переносится
+  assert.equal(L.salvageList('**128**', 'Посчитал: 100 ₽ + 28 ₽', '').answer, '**128**');
+  assert.match(L.salvageList('Итог', '', '- A — 1 000 ₽\n- B — 2 000 ₽').answer, /^Итог\n- A — \*\*1 000 ₽\*\*\n- B/);
+}
+
 console.log('agent-loop.test.js: OK');

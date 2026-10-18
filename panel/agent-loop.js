@@ -129,5 +129,23 @@ const AgentLoop = (() => {
     }).join('\n');
   }
 
-  return { wantShot, trimHistory, clickAtText, linkItems, listify, SPARSE_TEXT, SPARSE_ELEMENTS };
+  // Список не в том поле: модель положила в answer только заголовок («Топ-5 дешёвых…»), а сам список — в reasoning
+  // или summary (живой прогон Авито: в карточке ответа один заголовок). Если в ответе нет ни одной строки списка
+  // с ценой, а в пояснении (после listify — в любом виде: «- », «1.», «1) … 2) …») их хотя бы две — переносим их
+  // в ответ, а из пояснения убираем, чтобы не дублировать.
+  const priced = (l) => /^\s*[-•*]\s+\S/.test(l) && PRICE_RE.test(l);
+  function salvageList(answer, reasoning, summary) {
+    const out = { answer: String(answer || ''), reasoning: String(reasoning || ''), summary: String(summary || '') };
+    if (listify(out.answer).split('\n').some(priced)) return out;
+    for (const key of ['reasoning', 'summary']) {
+      const lines = listify(out[key]).split('\n'), items = lines.filter(priced);
+      if (items.length < 2) continue;
+      out.answer = (out.answer.trim() ? out.answer.trim() + '\n' : '') + items.map((l) => l.trim()).join('\n');
+      out[key] = lines.filter((l) => !priced(l)).join('\n').trim();
+      return out;
+    }
+    return out;
+  }
+
+  return { wantShot, trimHistory, clickAtText, linkItems, listify, salvageList, SPARSE_TEXT, SPARSE_ELEMENTS };
 })();

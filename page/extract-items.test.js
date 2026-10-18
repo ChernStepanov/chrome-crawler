@@ -196,4 +196,13 @@ assert.deepEqual(plain(X.items(h('html', {}, h('body', {}, h('p', {}, 'Ниче�
   assert.doesNotMatch(X.format(r, 'price_asc', 1e9), /not shown/, 'всё влезло — без примечания');
 }
 
+// ---- 10. Сортировка — только внутри страницы: подсказка включить сортировку сайта ----
+{
+  const it = (i, p) => ({ title: 'Товар ' + i, price: p, currency: 'RUB', url: 'https://x.ru/' + i, rating: null, reviews: null, details: '' });
+  const r = { method: 'cards', total: 3, items: [it(1, 300), it(2, 100), it(3, 200)] };
+  assert.match(X.format(r, 'price_asc'), /Sorted within this page only\..*the cheapest come first/);
+  assert.match(X.format(r, 'price_desc'), /most expensive come first/);
+  assert.doesNotMatch(X.format(r, 'none'), /Sorted within this page/, 'без сортировки — без подсказки');
+}
+
 console.log('extract-items.test.js: OK');

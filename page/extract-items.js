@@ -228,9 +228,14 @@
       return `Found ${r.total} item(s) via ${r.method}${r.total > n ? `, showing ${n}` : ''}` +
         (median ? `, median price ${fmt(median)}` : '') + ':\n' + shown.map((it, i) => line(it, i, dl)).join('\n') +
         (flagged ? `\n${flagged} item(s) marked ⚠: read their details before deciding — keep real items (a cheap one may be the best deal), drop parts and accessories.` : '') +
-        hiddenNote(n);
+        hiddenNote(n) + sortNote;
     };
     // Не всё влезло: честно — сколько скрыто и по каким ценам (раньше модель не знала, что за бортом есть дешевле).
+    // сортировка здесь — только среди объявлений этой страницы: у сайта может быть больше результатов (живой прогон:
+    // найдено 204, на странице ~50 — «самые дешёвые» были не самыми дешёвыми)
+    const sortNote = sort === 'price_asc' || sort === 'price_desc'
+      ? `\nSorted within this page only. If the site found more results than this page shows, turn on the site's own price sorting (its sort control or URL parameter) so the ${sort === 'price_asc' ? 'cheapest' : 'most expensive'} come first, then read again.`
+      : '';
     const hiddenNote = (n) => {
       const rest = list.slice(n), prices = rest.map((it) => it.price).filter((v) => typeof v === 'number' && v > 0);
       if (!rest.length) return '';

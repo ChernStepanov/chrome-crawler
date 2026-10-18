@@ -90,6 +90,120 @@ function skriptProbeChannels() {
   return { title: String(D.title || '').slice(0, 120), editors, globals, menus, docs, fileInputs: files, canvasPercent: Math.min(100, canvas) };
 }
 
+// ---- Источник состояния: откуда скрипт читает игру/страницу ----
+// Проба исполняется В СТРАНИЦЕ (world MAIN: видны переменные приложения и его localStorage), самодостаточна, только
+// чтение. Отдаёт ФАКТЫ без значений (имена ключей и полей, не содержимое): что есть в хранилище, в переменных
+// страницы, в DOM и сколько экрана занимает canvas. Вывод «откуда читать» делает skriptStateVerdict — кодом,
+// а не догадкой модели (живые прогоны: модель писала скрипт под DOM, которого нет, или смотрела пиксели,
+// когда состояние лежало в localStorage).
+function skriptProbeState() {
+  const W = globalThis, D = W.document;
+  const WORDS = /(score|best|grid|board|cells?|tiles?|state|level|lives|player|snake|food|pieces?|matrix|field|game|turn|moves?|счёт|очки|уровень)/i;
+  const out = { storage: [], globals: [], dom: [], scores: [], canvasPercent: 0 };
+  // хранилище: ключи с JSON-объектом или числом, связанные с состоянием (только имена ключей и полей)
+  try {
+    for (let i = 0; i < W.localStorage.length && out.storage.length < 6; i++) {
+      const k = W.localStorage.key(i), v = W.localStorage.getItem(k) || '';
+      if (v.length > 300000) continue;
+      let j = null;
+      try { j = JSON.parse(v); } catch (e) { /* не JSON */ }
+      if (j && typeof j === 'object') {
+        const fields = Object.keys(j).slice(0, 12);
+        if (WORDS.test(k) || fields.some((f) => WORDS.test(f))) out.storage.push({ key: k, fields });
+      } else if (WORDS.test(k) && /^-?\d+(\.\d+)?$/.test(v.trim())) out.storage.push({ key: k, fields: ['(number)'] });
+    }
+  } catch (e) { /* хранилище закрыто */ }
+  // переменные страницы: объекты с полями состояния
+  try {
+    for (const k of Object.keys(W)) {
+      if (out.globals.length >= 6) break;
+      if (/^(webkit|__crawler|__agent|chrome|__REACT|__VUE)/i.test(k)) continue;
+      const d = Object.getOwnPropertyDescriptor(W, k);
+      if (!d || !('value' in d)) continue;
+      const v = d.value;
+      if (!v || typeof v !== 'object' || v === W || v === D || v.nodeType) continue;
+      let keys = [];
+      try { keys = Object.keys(v).slice(0, 60); } catch (e) { continue; }
+      const hits = keys.filter((f) => WORDS.test(f));
+      if (hits.length >= 2 || (WORDS.test(k) && keys.length)) out.globals.push({ name: k, fields: (hits.length ? hits : keys).slice(0, 10) });
+    }
+  } catch (e) { /* чужие геттеры */ }
+  // DOM: группы одинаковых видимых элементов с коротким значением (клетки, плитки) или с «игровым» классом
+  const groups = new Map();
+  let scanned = 0;
+  for (const el of D.querySelectorAll('body *')) {
+    if (++scanned > 6000) break;
+    const cls = String(el.getAttribute('class') || '').trim().split(/\s+/)[0] || '';
+    const t = el.children.length ? '' : String(el.textContent || '').trim();
+    const cellish = WORDS.test(cls);
+    if (!cellish && (!t || t.length > 6)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 6 || r.height < 6 || r.bottom < 0 || r.top > W.innerHeight || r.right < 0 || r.left > W.innerWidth) continue;
+    const sig = el.tagName.toLowerCase() + (cls ? '.' + cls : '');
+    const g = groups.get(sig) || { sig, count: 0, numeric: 0, cellish, sample: [] };
+    g.count++;
+    if (/^\d+$/.test(t)) g.numeric++;
+    if (t && g.sample.length < 8) g.sample.push(t);
+    groups.set(sig, g);
+  }
+  out.dom = [...groups.values()].filter((g) => g.count >= 4 && (g.cellish || g.numeric >= g.count * 0.6))
+    .sort((a, b) => (b.cellish - a.cellish) || (b.count - a.count)).slice(0, 3);
+  // текст счёта
+  for (const el of D.querySelectorAll('[class*="score" i], [id*="score" i], [class*="points" i]')) {
+    if (out.scores.length >= 3) break;
+    const t = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (t && t.length <= 24) out.scores.push(t);
+  }
+  const vw = W.innerWidth * W.innerHeight || 1;
+  for (const c of D.querySelectorAll('canvas')) { const r = c.getBoundingClientRect(); out.canvasPercent = Math.max(out.canvasPercent, Math.round(r.width * r.height / vw * 100)); }
+  out.canvasPercent = Math.min(100, out.canvasPercent);
+  return out;
+}
+
+// Вывод по пробе: kind — js | check | dom | pixels | ui; text — для модели (английский, как промпт), ru — для лога.
+//   js     — живое состояние доски в переменных страницы (память игры) или в хранилище, когда canvas нет;
+//   check  — доска только в localStorage, а игра нарисована на canvas: запись может быть старой (живой случай
+//            play2048.co: игра в Web Worker на OffscreenCanvas, в localStorage — лишь ключи старой версии для импорта),
+//            модель проверяет одним ходом, меняется ли запись, иначе — пиксели;
+//   dom    — клетки в DOM; pixels — только картинка; ui — обычная страница.
+// Только рекорд/счёт (bestScore) — не состояние: идёт пометкой, на выбор пути не влияет.
+const SKRIPT_BOARD = /(grid|board|cells?|tiles?|matrix|field|map|pieces?|snake|squares?|stack)/i;
+function skriptStateVerdict(p) {
+  p = p || {};
+  const storage = p.storage || [], globals = p.globals || [], dom = p.dom || [], canvas = p.canvasPercent || 0;
+  const fields = (f) => f.slice(0, 8).join(', ');
+  const board = (o) => o.fields.some((f) => SKRIPT_BOARD.test(f));
+  const liveG = globals.filter(board), savedS = storage.filter(board);
+  const scoreS = storage.filter((s) => !board(s) && /score|best|record|рекорд|счёт|очки/i.test(s.key));
+  const scoreNote = scoreS.length ? ` Score/best score is readable from ${scoreS.map((s) => `localStorage["${s.key}"]`).join(', ')} (for evaluation only).` : '';
+  const canvasNote = canvas >= 10 ? ` The game is drawn on a canvas (${canvas}% of the screen).` : '';
+  if (liveG.length || (savedS.length && canvas < 10)) {
+    const where = [...liveG.map((g) => `window.${g.name} {${fields(g.fields)}}`), ...savedS.map((s) => `localStorage["${s.key}"] {${fields(s.fields)}}`)].slice(0, 4);
+    return { kind: 'js', where,
+      text: `Readable board state in page JS/storage: ${where.join('; ')}. Read the state from there inside the script (the window object, or JSON.parse(localStorage.getItem(key))) — exact and fast; do not read pixels or guess from the DOM. Check that it changes after one move (some games save only on certain events).` + canvasNote + scoreNote,
+      ru: `в JS/хранилище страницы: ${where.join('; ')}` };
+  }
+  if (savedS.length) {
+    const where = savedS.map((s) => `localStorage["${s.key}"] {${fields(s.fields)}}`).slice(0, 3);
+    return { kind: 'check', where,
+      text: `A saved board exists only in ${where.join('; ')}, while the game is drawn on a canvas (${canvas}% of the screen) — it may run in a worker and the saved copy may be stale (e.g. left from an older version). Check first: read it, make ONE move, read again. If it changed — read the state from it; if not — ignore it and read the board with __crawler.pixels/__crawler.grid.` + scoreNote,
+      ru: `проверить: доска есть только в ${where.join('; ')}, а игра на canvas ${canvas}% — запись может быть старой` };
+  }
+  if (dom.length) {
+    const g = dom[0];
+    return { kind: 'dom', where: [g.sig],
+      text: `State is in the DOM: ${g.count} × <${g.sig}>${g.sample.length ? ` with values like ${g.sample.slice(0, 6).map((x) => JSON.stringify(x)).join(', ')}` : ''}. Read them with document.querySelectorAll inside the script.` +
+        (canvas >= 10 ? ` (A canvas covers ${canvas}% of the screen too — prefer the DOM.)` : '') + scoreNote,
+      ru: `в DOM: ${g.count} × ${g.sig}` };
+  }
+  if (canvas >= 10) {
+    return { kind: 'pixels', where: [],
+      text: `No readable board in page JS, localStorage or the DOM; the content is drawn on a canvas (${canvas}% of the screen) and may be rendered off the main thread. Read it with __crawler.pixels/__crawler.grid inside the script.` + scoreNote,
+      ru: `только картинка: canvas ${canvas}% экрана, доски в JS/хранилище/DOM нет` + (scoreS.length ? ` (рекорд — в localStorage["${scoreS[0].key}"])` : '') };
+  }
+  return { kind: 'ui', where: [], text: 'No game-like state found: an ordinary page — work with the DOM and the normal tools.' + scoreNote, ru: 'обычная страница, игрового состояния нет' };
+}
+
 // Сообщения для модели: цель обязательна, ответ — строгий JSON стратегии.
 function skriptStrategyMessages({ goal, origin, path, probe, snapshot }) {
   const system = [
@@ -148,6 +262,8 @@ const SkriptPath = {
   docs: skriptPathDocs,
   parse: skriptParsePath,
   probe: skriptProbeChannels,
+  probeState: skriptProbeState,
+  stateVerdict: skriptStateVerdict,
   strategyMessages: skriptStrategyMessages,
   parseStrategy: skriptParseStrategy,
   formatStrategy: skriptFormatStrategy

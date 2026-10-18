@@ -75,6 +75,7 @@ function setup({ grants = { act: true } } = {}) {
     fail: (text) => ({ text, error: true }), container, signal: () => ac.signal,
     busy: () => flags.busy, activeTabId: async () => 7, onSaved: () => { flags.saved++; },
     release: async () => { flags.released++; },
+    onScript: (on) => { (flags.scriptEvents = flags.scriptEvents || []).push(on); },
     capture: (...a) => (flags.capture ? flags.capture(...a) : null),
     repair: (text) => { flags.repairText = text; }
   });
@@ -88,7 +89,7 @@ function setup({ grants = { act: true } } = {}) {
 
   // ---- 1. Полный поток: карточка, одобрение, запуск, сводка ----
   {
-    const { R, container, input, clickBtn, st } = setup();
+    const { R, container, input, clickBtn, flags, st } = setup();
     assert.deepEqual(JSON.parse(JSON.stringify(R.tools().map((t) => t.function.name))), ['write_script', 'patch_script', 'screenshot_region', 'run_script', 'stop_script', 'get_telemetry']);
     const p = R.handle('write_script', { title: 'Играть', description: 'играет', code }, st);
     await sleep(1600); // пробный прогон ≤ 1.2 с
@@ -103,6 +104,7 @@ function setup({ grants = { act: true } } = {}) {
     assert.match(res.text, /"score":40/);
     assert.equal(input.keys.length, 4, 'после одобрения нажато 4 раза');
     assert.equal(card.dataset.state, 'ok');
+    assert.deepEqual(flags.scriptEvents, [true, false], 'панель знает, когда скрипт работает (щупальца уходят и возвращаются)');
     // run_script: версия одобрена → без вопроса
     const again = await R.handle('run_script', {}, st);
     assert.match(again.text, /ended: Готово/);
@@ -178,6 +180,25 @@ function setup({ grants = { act: true } } = {}) {
     assert.ok(Date.now() - t0 < 300);
     assert.match(res.text, /Остановлено вами/);
     assert.match(res.text, /patch_script/, 'модель получает подсказку, что делать дальше');
+  }
+
+  // ---- 5б. «Стоп» задачи, пока скрипт работает (живой баг): задача завершается (end) раньше, чем раннер
+  //          дозакрыл карточку — карточка оставалась «работающей»: таймер, кнопка стопа, нет «Запустить снова» ----
+  {
+    const { R, container, ac, clickBtn, flags, st } = setup();
+    const btn = (root, label) => root.find((e) => e.tag === 'button' && e.textContent === label);
+    const p = R.handle('write_script', { title: 'Цикл', code: 'const c = __crawler.loop(() => { __crawler.report({ a: 1 }); }, { fps: 30 });' }, st);
+    await sleep(1600);
+    clickBtn('Запустить');
+    await sleep(150);
+    ac.abort();                // «Стоп» в панели: задача сразу уходит в finally…
+    await R.end();             // …и завершает режим, не дожидаясь раннера
+    const res = await p;       // раннер дозакрывает карточку уже после end
+    assert.ok(!res.error, res.text);
+    const card = container.children[0];
+    assert.equal(card.dataset.state, 'stopped', 'карточка закрыта («■ остановлен»), а не «работает»');
+    assert.deepEqual(flags.scriptEvents, [true, false], 'и по «Стоп» панель узнаёт, что скрипт остановлен');
+    assert.ok(btn(card, 'Запустить снова'), 'можно запустить снова');
   }
 
   // ---- 6. После «Стоп» и конца задачи: «Запустить снова» без модели, сохранение, запуск сохранённого ----
