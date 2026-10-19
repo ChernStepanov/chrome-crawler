@@ -100,6 +100,19 @@ function skriptProbeState() {
   const W = globalThis, D = W.document;
   const WORDS = /(score|best|grid|board|cells?|tiles?|state|level|lives|player|snake|food|pieces?|matrix|field|game|turn|moves?|счёт|очки|уровень)/i;
   const out = { storage: [], globals: [], dom: [], scores: [], canvasPercent: 0 };
+  // доска — по значению, а не по имени поля: массив ≥ 4 / вложенные массивы / объект ≥ 4 полей (живой случай:
+  // на play2048.co служебный объект с полем «map»/«field» сошёл за доску, модель поверила и сдалась)
+  const BOARD = /(grid|board|cells?|tiles?|matrix|field|map|pieces?|snake|squares?|stack)/i;
+  // классическая 2048: grid = { size: 4, cells: [[…]] } — доска на уровень глубже
+  const boardLike = (v, depth = 0) => {
+    try {
+      if (Array.isArray(v) || ArrayBuffer.isView(v)) return v.length >= 4 || (Array.isArray(v) && v.some((x) => Array.isArray(x) && x.length));
+      if (!v || typeof v !== 'object' || v.nodeType) return false;
+      const vals = Object.values(v);
+      return vals.length >= 4 || (depth < 2 && vals.some((x) => boardLike(x, depth + 1)));
+    } catch (e) { return false; }
+  };
+  const boardFields = (o) => { try { return Object.keys(o).filter((f) => BOARD.test(f) && boardLike(o[f])); } catch (e) { return []; } };
   // хранилище: ключи с JSON-объектом или числом, связанные с состоянием (только имена ключей и полей)
   try {
     for (let i = 0; i < W.localStorage.length && out.storage.length < 6; i++) {
@@ -109,7 +122,7 @@ function skriptProbeState() {
       try { j = JSON.parse(v); } catch (e) { /* не JSON */ }
       if (j && typeof j === 'object') {
         const fields = Object.keys(j).slice(0, 12);
-        if (WORDS.test(k) || fields.some((f) => WORDS.test(f))) out.storage.push({ key: k, fields });
+        if (WORDS.test(k) || fields.some((f) => WORDS.test(f))) out.storage.push({ key: k, fields, board: boardFields(j).length > 0 });
       } else if (WORDS.test(k) && /^-?\d+(\.\d+)?$/.test(v.trim())) out.storage.push({ key: k, fields: ['(number)'] });
     }
   } catch (e) { /* хранилище закрыто */ }
@@ -125,7 +138,7 @@ function skriptProbeState() {
       let keys = [];
       try { keys = Object.keys(v).slice(0, 60); } catch (e) { continue; }
       const hits = keys.filter((f) => WORDS.test(f));
-      if (hits.length >= 2 || (WORDS.test(k) && keys.length)) out.globals.push({ name: k, fields: (hits.length ? hits : keys).slice(0, 10) });
+      if (hits.length >= 2 || (WORDS.test(k) && keys.length)) out.globals.push({ name: k, fields: (hits.length ? hits : keys).slice(0, 10), board: boardFields(v).length > 0 });
     }
   } catch (e) { /* чужие геттеры */ }
   // DOM: группы одинаковых видимых элементов с коротким значением (клетки, плитки) или с «игровым» классом
@@ -172,21 +185,22 @@ function skriptStateVerdict(p) {
   p = p || {};
   const storage = p.storage || [], globals = p.globals || [], dom = p.dom || [], canvas = p.canvasPercent || 0;
   const fields = (f) => f.slice(0, 8).join(', ');
-  const board = (o) => o.fields.some((f) => SKRIPT_BOARD.test(f));
+  const board = (o) => (o.board !== undefined ? !!o.board : o.fields.some((f) => SKRIPT_BOARD.test(f)));   // проба проверила значение
   const liveG = globals.filter(board), savedS = storage.filter(board);
   const scoreS = storage.filter((s) => !board(s) && /score|best|record|рекорд|счёт|очки/i.test(s.key));
-  const scoreNote = scoreS.length ? ` Score/best score is readable from ${scoreS.map((s) => `localStorage["${s.key}"]`).join(', ')} (for evaluation only).` : '';
-  const canvasNote = canvas >= 10 ? ` The game is drawn on a canvas (${canvas}% of the screen).` : '';
+  const scoreNote = scoreS.length ? ` Score/best score is readable with ${scoreS.map((s) => `__crawler.saved("${s.key}")`).join(', ')} (for evaluation only).` : '';
+  // canvas на экране — всегда есть запасной путь: найденное состояние может оказаться пустым или «не тем»
+  const canvasNote = canvas >= 10 ? ` The game is also drawn on a canvas (${canvas}% of the screen): if this state turns out empty, not the board, or does not change after a move — read the board from pixels with __crawler.pixels/__crawler.grid instead; do not give up.` : '';
   if (liveG.length || (savedS.length && canvas < 10)) {
     const where = [...liveG.map((g) => `window.${g.name} {${fields(g.fields)}}`), ...savedS.map((s) => `localStorage["${s.key}"] {${fields(s.fields)}}`)].slice(0, 4);
     return { kind: 'js', where,
-      text: `Readable board state in page JS/storage: ${where.join('; ')}. Read the state from there inside the script (the window object, or JSON.parse(localStorage.getItem(key))) — exact and fast; do not read pixels or guess from the DOM. Check that it changes after one move (some games save only on certain events).` + canvasNote + scoreNote,
+      text: `Readable board state in page JS/storage: ${where.join('; ')}. Read the state from there inside the script (the window object, or __crawler.saved(key) for localStorage — direct localStorage is not allowed) — exact and fast; prefer it over pixels and guessing from the DOM. Check that it changes after one move (some games save only on certain events; remember the dry run sends no input).` + canvasNote + scoreNote,
       ru: `в JS/хранилище страницы: ${where.join('; ')}` };
   }
   if (savedS.length) {
     const where = savedS.map((s) => `localStorage["${s.key}"] {${fields(s.fields)}}`).slice(0, 3);
     return { kind: 'check', where,
-      text: `A saved board exists only in ${where.join('; ')}, while the game is drawn on a canvas (${canvas}% of the screen) — it may run in a worker and the saved copy may be stale (e.g. left from an older version). Check first: read it, make ONE move, read again. If it changed — read the state from it; if not — ignore it and read the board with __crawler.pixels/__crawler.grid.` + scoreNote,
+      text: `A saved board exists only in ${where.join('; ')}, while the game is drawn on a canvas (${canvas}% of the screen) — it may run in a worker and the saved copy may be stale (e.g. left from an older version). Check first (in a real run, not the dry run): read it with __crawler.saved(key), make ONE move, read again. If it changed — read the state from it; if not — ignore it and read the board with __crawler.pixels/__crawler.grid.` + scoreNote,
       ru: `проверить: доска есть только в ${where.join('; ')}, а игра на canvas ${canvas}% — запись может быть старой` };
   }
   if (dom.length) {

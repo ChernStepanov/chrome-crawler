@@ -217,7 +217,7 @@ function addChat(role, text, kind, extra) {
   chatSave = chatSave.catch(() => {}).then(() => chrome.storage.local.set(snapshot));
 }
 
-const STATE_COLORS = { idle: 'var(--muted)', run: 'var(--accent)', done: 'var(--ok)', err: 'var(--critical)' };
+const STATE_COLORS = { idle: 'var(--muted)', run: 'var(--accent)', done: 'var(--ok)', err: 'var(--critical)', wait: 'var(--warn)' };
 
 function normalizeBaseUrl(raw) {
   let v = (raw || '').trim().replace(/\/+$/, '');
@@ -1621,6 +1621,7 @@ async function touchSwipe(tabId, x1, y1, x2, y2, steps = 8) {
 // «выкачивают» их и сменяют друг друга; задача кончилась — stopSuck() втягивает. Вид — настройка «Щупальца».
 // Ничего не ждёт и на действия не влияет; ошибки (служебные страницы) глотаются. Выкл. анимации — не запускаются.
 let suckTab = null, suckLoop = false, scriptRunning = false;
+let skriptSavedKeys = [];                                              // ключи localStorage с состоянием игры (проба /skript)
 const SUCK_HIDE_MS = 900;                                              // на столько щупальца прячутся перед снимком экрана
 // Вызывается на каждом шаге: повторный вызов только обновляет цвет и высоту (после перехода страницы — запускает заново).
 function suckPage(tabId) {
@@ -1656,6 +1657,22 @@ function stopSuck() {
   suckLoop = false;
   window.CrawlerArt?.unsuck?.();
   if (suckTab != null) chrome.scripting.executeScript({ target: { tabId: suckTab }, func: () => window.__crawlerSuck?.stop() }).catch(() => {});
+}
+// Карточка скрипта ждёт «Запустить»: модель в это время не думает — в шапке ожидание человека, мозг «ждёт»,
+// щупальца уходят. Отклонил — модель продолжает, щупальца возвращаются; запустил — дальше их держит onScript.
+let askHero = null;
+function onAsk(on, decision) {
+  if (on) {
+    askHero = [$('heroTitle').textContent, $('heroSub').textContent];
+    setHero('Скрипт готов', 'Нажмите «Запустить» в карточке', 'wait');
+    showFigure('awaiting_confirmation');
+    stopSuck();
+    return;
+  }
+  showFigure(running ? 'working' : 'idle');
+  if (askHero && running) setHero(askHero[0], askHero[1], 'run');
+  askHero = null;
+  if (decision === 'reject' && running && abortCtl && !abortCtl.signal.aborted && suckTab != null) suckPage(suckTab);
 }
 // Скрипт /skript запустился — щупальца уходят; остановился, а задача ещё идёт (модель чинит, думает) — выходят снова.
 function onScript(on) {
@@ -2252,11 +2269,13 @@ async function runTask() {
   }
   // /skript: откуда читать состояние (JS/хранилище, DOM или только картинка) — измеряет код, модель получает факт
   let stateSrc = null, stateUrl = '';
+  skriptSavedKeys = [];
   const probeStateSrc = async (tabId, url) => {
     stateUrl = url;
     try {
       const [{ result } = {}] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: SkriptPath.probeState });
       stateSrc = SkriptPath.stateVerdict(result);
+      skriptSavedKeys = (result?.storage || []).map((x) => x.key);   // __crawler.saved читает только эти ключи
       log('info', `Источник состояния: ${stateSrc.ru}.`);
     } catch (e) { stateSrc = null; }
   };
@@ -2555,6 +2574,17 @@ async function runTask() {
         prefix += '\nUser sent a new clarification: continue instead of finishing.';
         finished = null;
       }
+      // /skript: модель сдаётся, не попробовав следующую ступень пути (живой провал: canvas-2048 — проверила объект
+      // страницы, доски нет, done(false) без попытки читать пиксели). Один раз за задачу — напомнить и продолжить.
+      const gameLike = stateSrc && stateSrc.kind !== 'ui';
+      if (finished && skript && !st.gaveUpHinted && (finished.success === false || (gameLike && !SkriptRun.acted()))) {
+        st.gaveUpHinted = true;
+        prefix += '\nBefore giving up: try the next level of the path ladder that you have not tried yet.' +
+          (stateSrc ? ` STATE SOURCE says: ${stateSrc.text}` : '') +
+          ' For a game drawn on a canvas that means reading the board from pixels (__crawler.pixels/__crawler.grid; look at the layout first with screenshot_region). Finish with success=false only if that fails too.';
+        log('info', 'Модель хотела сдаться — напомнил про следующий путь (один раз за задачу).');
+        finished = null;
+      }
       if (finished) {
         setProgress(step, cfg.maxSteps);
         if (finished.answer) {
@@ -2643,6 +2673,20 @@ async function checkUpdates(force = false) {
   $('ucTitle').textContent = `Доступна версия ${u.version} (у вас ${u.current})`;
   $('ucMsg').textContent = u.message;
   $('ucZip').onclick = () => chrome.tabs.create({ url: u.zip });
+  // «Обновиться»: скачать с GitHub и записать в папку расширения (self-update.js), затем перезапуск
+  $('ucUpdate').onclick = async () => {
+    const status = (t, bad = false) => { $('ucStatus').textContent = t; $('ucStatus').classList.toggle('bad', bad); };
+    if (running) { status('Дождитесь конца задачи или остановите её.', true); return; }
+    $('ucUpdate').disabled = true;
+    try {
+      const n = await SelfUpdate.update(u, chrome.runtime.getManifest(), { onStep: (t) => status(t) });
+      status(`Готово: ${n} файлов, версия ${u.version}. Перезапускаю…`);
+      setTimeout(() => chrome.runtime.reload(), 700);
+    } catch (e) {
+      status(e.name === 'AbortError' ? 'Папка не выбрана.' : e.message, true);   // отмена выбора папки — AbortError
+      $('ucUpdate').disabled = false;
+    }
+  };
   $('ucPage').onclick = () => chrome.tabs.create({ url: u.page });
   $('ucClose').onclick = async () => { await chrome.storage.local.set({ updateDismissed: u.version }); checkUpdates(); };
 }
@@ -2794,7 +2838,7 @@ ta.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); runTask(); }
 });
 
-SkriptRun.init({ hideFx: hideSuck, onScript, cdp, parseKey, pressKey, mouseClick, mouseDrag, sleep, tabUrl, fail, container: $('log'), signal: () => abortCtl?.signal,
+SkriptRun.init({ hideFx: hideSuck, onScript, onAsk, savedKeys: () => skriptSavedKeys, cdp, parseKey, pressKey, mouseClick, mouseDrag, sleep, tabUrl, fail, container: $('log'), signal: () => abortCtl?.signal,
   busy: () => running, activeTabId: async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id,
   onSaved: () => { SkriptLibrary.refresh(); if (!$('skillsSheet').hidden) renderSkills(); },
   reveal: () => { closeAllSheets(); setView('actions'); },

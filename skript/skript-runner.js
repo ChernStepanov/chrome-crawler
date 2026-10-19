@@ -188,6 +188,18 @@ function skriptPageSide(NONCE, L, DRY, ARGS, USER, GRID) {
     log(msg) { send({ t: 'log', msg: String(msg).slice(0, 200) }); },
     done(result) { finish(result); },
     get stopped() { return S.stopped; },
+    // пробный прогон: ввод не отправляется, страница не меняется — скрипт не должен считать это ошибкой
+    dry: !!DRY,
+    // Сохранённое состояние игры из localStorage — только чтение и только ключи, которые проба страницы нашла как
+    // состояние (L.savedKeys). Прямой localStorage в коде модели запрещён (там бывают токены и личные данные).
+    saved(key) {
+      const k = String(key);
+      if (!Array.isArray(L.savedKeys) || !L.savedKeys.includes(k)) return null;
+      let v = null;
+      try { v = globalThis.localStorage.getItem(k); } catch (e) { return null; }
+      if (v === null) return null;
+      try { return JSON.parse(v); } catch (e) { return v; }
+    },
     limits: Object.freeze({ actionsPerSecond: L.actionsPerSecond, maxMs: L.maxMs })
   };
   Object.freeze(api);
@@ -331,7 +343,7 @@ function skriptCreateRunner(opts = {}) {
 
     // Запуск. Возвращает промис со сводкой после остановки по любой причине.
     // approved обязателен: модель не запускает первую версию сама.
-    async run({ code, args = {}, dryRun = false, approved = false, permissions = ['read'], maxMs, expectedOrigin = '' } = {}) {
+    async run({ code, args = {}, dryRun = false, approved = false, permissions = ['read'], maxMs, expectedOrigin = '', savedKeys = [] } = {}) {
       if (this.running) throw new Error('Скрипт уже запущен: сначала остановите его.');
       if (!approved && !dryRun) return { ok: false, reason: 'not-approved', error: 'Первый запуск требует нажатия «Запустить» в панели.' };
       Object.assign(this, {
@@ -347,7 +359,7 @@ function skriptCreateRunner(opts = {}) {
         const probe = await cdp('Runtime.evaluate', { expression: `typeof globalThis.${SKRIPT_BINDING}`, returnByValue: true });
         if (!probe || !probe.result || probe.result.value !== 'function') { await this.stop('bridge-unavailable'); return ended; }
         const r = await cdp('Runtime.evaluate', {
-          expression: skriptBuildExpression({ code, args, nonce: this.nonce, dryRun, limits }), returnByValue: true, userGesture: false
+          expression: skriptBuildExpression({ code, args, nonce: this.nonce, dryRun, limits: { ...limits, savedKeys: (savedKeys || []).map(String).slice(0, 8) } }), returnByValue: true, userGesture: false
         });
         if (r && r.exceptionDetails) {
           const d = r.exceptionDetails;

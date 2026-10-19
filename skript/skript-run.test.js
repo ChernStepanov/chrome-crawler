@@ -76,6 +76,7 @@ function setup({ grants = { act: true } } = {}) {
     busy: () => flags.busy, activeTabId: async () => 7, onSaved: () => { flags.saved++; },
     release: async () => { flags.released++; },
     onScript: (on) => { (flags.scriptEvents = flags.scriptEvents || []).push(on); },
+    onAsk: (on, d) => { (flags.askEvents = flags.askEvents || []).push(on ? 'ждёт' : 'решено:' + d); },
     capture: (...a) => (flags.capture ? flags.capture(...a) : null),
     repair: (text) => { flags.repairText = text; }
   });
@@ -105,6 +106,7 @@ function setup({ grants = { act: true } } = {}) {
     assert.equal(input.keys.length, 4, 'после одобрения нажато 4 раза');
     assert.equal(card.dataset.state, 'ok');
     assert.deepEqual(flags.scriptEvents, [true, false], 'панель знает, когда скрипт работает (щупальца уходят и возвращаются)');
+    assert.deepEqual(flags.askEvents, ['ждёт', 'решено:run'], 'пока карточка ждёт «Запустить», панель показывает ожидание человека, а не «думает»');
     // run_script: версия одобрена → без вопроса
     const again = await R.handle('run_script', {}, st);
     assert.match(again.text, /ended: Готово/);

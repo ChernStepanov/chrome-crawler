@@ -141,6 +141,13 @@
   .uc-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
   .uc-steps code { font-size: 11.5px; }
   .uc-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .uc-hint { color: var(--muted); }
+  .uc-hint code, .uc-manual code { font-size: 11.5px; }
+  .uc-status:empty { display: none; }
+  .uc-status { font-weight: 600; color: var(--acc); }
+  .uc-status.bad { color: var(--critical); }
+  .uc-manual summary { cursor: pointer; color: var(--muted); }
+  .uc-manual .uc-steps { margin: 4px 0 8px; }
   .pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: var(--r-pill); border: 1px solid var(--bd); background: transparent; font-size: 11px; color: var(--muted); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill.model { color: var(--txt); background: var(--card); }
   .pill.model:hover { border-color: var(--accent); }
@@ -561,15 +568,22 @@
   <div class="update-card" id="updateCard" hidden>
     <div class="uc-head"><strong id="ucTitle"></strong><button class="mini" id="ucClose" type="button" aria-label="Скрыть до следующей версии" title="Скрыть до следующей версии"><svg class="ic"><use href="#i-x"/></svg></button></div>
     <div class="uc-msg" id="ucMsg"></div>
-    <ol class="uc-steps">
-      <li>Скачайте ZIP и распакуйте.</li>
-      <li>Замените файлы в папке расширения новыми (настройки, ключи и скрипты хранятся в браузере — не пропадут). Если ставили через git — <code>git pull</code>.</li>
-      <li>Нажмите «Перезапустить расширение».</li>
-    </ol>
+    <div class="uc-hint">«Обновиться» скачает новую версию с GitHub и запишет её в папку расширения. В первый раз Chrome попросит выбрать эту папку (ту, что загружали в <code>chrome://extensions</code>). Настройки, ключи и скрипты хранятся в браузере — не пропадут.</div>
+    <div class="uc-status" id="ucStatus" aria-live="polite"></div>
+    <details class="uc-manual"><summary>Вручную</summary>
+      <ol class="uc-steps">
+        <li>Скачайте ZIP и распакуйте.</li>
+        <li>Замените файлы в папке расширения новыми. Если ставили через git — <code>git pull</code>.</li>
+        <li>Нажмите «Перезапустить расширение».</li>
+      </ol>
+      <div class="uc-actions">
+        <button class="btn" id="ucZip" type="button">Скачать ZIP</button>
+        <button class="btn" id="ucPage" type="button">Открыть на GitHub</button>
+        <button class="btn" id="ucReload" type="button">Перезапустить расширение</button>
+      </div>
+    </details>
     <div class="uc-actions">
-      <button class="btn primary" id="ucZip" type="button">Скачать ZIP</button>
-      <button class="btn" id="ucPage" type="button">Открыть на GitHub</button>
-      <button class="btn" id="ucReload" type="button">Перезапустить расширение</button>
+      <button class="btn primary" id="ucUpdate" type="button">Обновиться</button>
     </div>
   </div>
 
@@ -749,6 +763,7 @@
 <script src="attachments.js"></script>
 <script src="agent-loop.js"></script>
 <script src="updates.js"></script>
+<script src="self-update.js"></script>
 <script src="tour.js"></script>
 <script src="model-switch.js"></script>
 <script src="sidepanel.js"></script>

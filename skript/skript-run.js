@@ -193,6 +193,9 @@ const SkriptRun = (() => {
     return { text: lines.join('\n') };
   }
 
+  // ключи localStorage с состоянием, найденные пробой страницы (панель): __crawler.saved читает только их
+  const savedKeys = () => (deps.savedKeys ? deps.savedKeys() || [] : []);
+
   async function execute(d, args, st) {
     const grants = SkriptMode.grants || {};
     const perms = d.permissions.filter((p) => p !== 'input' || grants.act);
@@ -209,7 +212,7 @@ const SkriptRun = (() => {
     const reader = startGoalReader(st.tabId, d.goal);
     let s;
     deps.onScript?.(true);                                           // скрипт работает — панель убирает щупальца со страницы
-    try { s = await runner.run({ code: d.code, args: args || {}, approved: true, permissions: perms, expectedOrigin: origin }); }
+    try { s = await runner.run({ code: d.code, args: args || {}, approved: true, permissions: perms, expectedOrigin: origin, savedKeys: savedKeys() }); }
     finally { if (signal) signal.removeEventListener('abort', onAbort); deps.onScript?.(false); }
     if (s.reason === 'aborted' || (signal && signal.aborted)) {
       // задача остановлена: панель уже завершает её и отключает отладчик — замеры страницы не делаем,
@@ -246,7 +249,7 @@ const SkriptRun = (() => {
     c.running(() => run.stop('manual'));
     deps.onScript?.(true);
     let s;
-    try { s = await run.run({ code: item.code, args: {}, approved: true, permissions: item.permissions, expectedOrigin: origin }); }
+    try { s = await run.run({ code: item.code, args: {}, approved: true, permissions: item.permissions, expectedOrigin: origin, savedKeys: savedKeys() }); }
     finally { deps.onScript?.(false); }
     lastSummary = s;
     c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(run)}`, finishState(s));
@@ -376,16 +379,21 @@ const SkriptRun = (() => {
     if (!syntax.ok) return deps.fail(`Syntax error: ${syntax.error}. Fix it with patch_script.`);
     // Пробный прогон выполняет код на странице: делаем его только для кода без записи в DOM.
     if (!d.permissions.includes('dom-write')) {
-      const dry = await run.run({ code: d.code, args: {}, dryRun: true, maxMs: 1200, permissions: ['read'] });
+      const dry = await run.run({ code: d.code, args: {}, dryRun: true, maxMs: 1200, permissions: ['read'], savedKeys: savedKeys() });
       if (dry.reason === 'bridge-unavailable') return deps.fail('Cannot reach the page to test the script (restricted page?). Tell the user.');
       if (!dry.ok || dry.errors.length) {
         const errs = dry.errors.length ? dry.errors : [dry.reason];
-        return deps.fail(`Dry run failed: ${errs.join('; ')}.${undefinedHint(errs)}${canvasHint(errs)} Fix it with patch_script.`);
+        // пробный прогон без ввода: проверки «после хода что-то изменилось» в нём всегда падают — объяснить и не сдаваться
+        const inputHint = /измен|change|move|ход|after|после/i.test(errs.join(' ')) ? ' The dry run sends NO input and the page does not change: skip checks like "the board changed after my move" while __crawler.dry is true.' : '';
+        return deps.fail(`Dry run failed: ${errs.join('; ')}.${undefinedHint(errs)}${canvasHint(errs)}${inputHint} Fix it with patch_script and continue — one failed dry run is normal, do not finish the task.`);
       }
     }
     showCard(d);
     const asked = card;                                              // своя ссылка: по «Стоп» общая card обнуляется (end)
-    const decision = await asked.ask(deps.signal());
+    // карточка ждёт «Запустить»: модель не думает — панель показывает ожидание человека (deps.onAsk)
+    deps.onAsk?.(true);
+    let decision;
+    try { decision = await asked.ask(deps.signal()); } finally { deps.onAsk?.(false, decision); }
     if (decision === 'abort') { asked.finish('Остановлено', 'stopped'); return { text: 'Task stopped by the user.' }; }
     if (decision === 'reject') {
       asked.finish('Отклонено вами', false);
@@ -471,6 +479,8 @@ const SkriptRun = (() => {
     },
     // «Новый запуск»: лог очищен — карточек больше нет, реестр пуст.
     resetCards() { cards.clear(); draftCards.clear(); card = null; },
+    // за эту задачу хоть один запуск скрипта делал ходы (не пробный прогон и не «только чтение»)
+    acted() { return !!(lastSummary && lastSummary.actions > 0); },
     handle,
     runSaved
   };

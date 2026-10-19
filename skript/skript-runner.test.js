@@ -166,6 +166,22 @@ function makePage(opt = {}) {
     assert.ok(r.dryActions > 0, 'действия посчитаны');
   }
 
+  // ---- 7б. Сохранённое состояние: __crawler.saved — только ключи из пробы; __crawler.dry в пробном прогоне ----
+  {
+    const { runner, page } = makePage();
+    const store = { gameState: JSON.stringify({ grid: [[2, 0], [0, 4]], score: 36 }), token: 'секрет', bestScore: '512' };
+    page.localStorage = { getItem: (k) => (k in store ? store[k] : null) };
+    const code = 'return { s: __crawler.saved("gameState"), best: __crawler.saved("bestScore"), t: __crawler.saved("token"), dry: __crawler.dry };';
+    const r = await runner.run({ code, approved: true, savedKeys: ['gameState', 'bestScore'] });
+    const v = JSON.parse(JSON.stringify(r.result));
+    assert.deepEqual(v.s, { grid: [[2, 0], [0, 4]], score: 36 }, 'разрешённый ключ — разобранный JSON');
+    assert.equal(v.best, 512);
+    assert.equal(v.t, null, 'ключ не из пробы (токен) — не читается');
+    assert.equal(v.dry, false);
+    const d = await runner.run({ code, dryRun: true, maxMs: 300, permissions: ['read'], savedKeys: ['gameState'] });
+    assert.equal(JSON.parse(JSON.stringify(d.result)).dry, true, 'в пробном прогоне скрипт знает, что ввода нет');
+  }
+
   // ---- 8. Первый запуск без одобрения ----
   {
     const { runner, calls } = makePage();

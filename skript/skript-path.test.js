@@ -104,7 +104,7 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
 
   // 2048 в браузере: состояние в localStorage, плитки в DOM — выигрывает JS/хранилище (точнее DOM)
   const tiles = Array.from({ length: 6 }, (_, i) => ({ cls: 'tile-inner', text: String(2 ** (i + 1)) }));
-  const g2048 = mkPage({ storage: { gameState: JSON.stringify({ grid: {}, score: 120, over: false, won: false }), bestScore: '2048', theme: 'dark' },
+  const g2048 = mkPage({ storage: { gameState: JSON.stringify({ grid: { size: 4, cells: [[null, { value: 2 }, null, null], [null, null, null, null], [null, null, null, null], [null, null, null, null]] }, score: 120, over: false, won: false }), bestScore: '2048', theme: 'dark' },
     els: [...tiles, { cls: 'score-container', text: '120' }] });
   const r1 = g2048.run();
   assert.deepEqual(r1.storage.map((s) => s.key), ['gameState', 'bestScore'], 'ключи состояния, без посторонних (theme)');
@@ -115,10 +115,10 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
   const v1 = P.stateVerdict(r1);
   assert.equal(v1.kind, 'js');
   assert.match(v1.text, /localStorage\["gameState"\] \{grid, score, over, won\}/);
-  assert.match(v1.text, /do not read pixels/);
+  assert.match(v1.text, /prefer it over pixels/);
 
   // переменные страницы с полями состояния
-  const v2 = P.stateVerdict(mkPage({ globals: 'globalThis.game = { board: [], score: 0, level: 1, speed: 2 }; globalThis.cfg = { a: 1 };' }).run());
+  const v2 = P.stateVerdict(mkPage({ globals: 'globalThis.game = { board: [[0, 2], [4, 0]], score: 0, level: 1, speed: 2 }; globalThis.cfg = { a: 1 };' }).run());
   assert.equal(v2.kind, 'js');
   assert.match(v2.text, /window\.game \{board, score, level\}/);
 
@@ -135,16 +135,22 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
   // play2048.co: игра в Web Worker на OffscreenCanvas; в localStorage может остаться только старый gameState
   // классической версии (сайт берёт его лишь для импорта) — «проверить одним ходом», а не «читай хранилище»
   const canvasRect = { left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600 };
-  const vCo = P.stateVerdict(mkPage({ storage: { gameState: JSON.stringify({ grid: {}, score: 8 }), bestScore: '512' }, canvas: canvasRect }).run());
+  const vCo = P.stateVerdict(mkPage({ storage: { gameState: JSON.stringify({ grid: { size: 4, cells: [[null, null, null, null], [], [], []] }, score: 8 }), bestScore: '512' }, canvas: canvasRect }).run());
   assert.equal(vCo.kind, 'check');
   assert.match(vCo.text, /make ONE move, read again.*if not — ignore it and read the board with __crawler\.pixels/);
-  assert.match(vCo.text, /localStorage\["bestScore"\] \(for evaluation only\)/);
+  assert.match(vCo.text, /__crawler\.saved\("bestScore"\) \(for evaluation only\)/);
+  assert.match(v1.text, /__crawler\.saved\(key\) for localStorage — direct localStorage is not allowed/, 'модели — разрешённый путь, а не запрещённый localStorage');
   // .co с чистым хранилищем, только рекорд — пиксели (рекорд — пометкой, не путь)
   const vCo2 = P.stateVerdict(mkPage({ storage: { bestScore: '2048' }, canvas: canvasRect }).run());
   assert.equal(vCo2.kind, 'pixels');
   assert.match(vCo2.ru, /рекорд — в localStorage\["bestScore"\]/);
   // живое состояние в переменной — доверяем даже при canvas
-  assert.equal(P.stateVerdict(mkPage({ globals: 'globalThis.game = { board: [], score: 0 };', canvas: canvasRect }).run()).kind, 'js');
+  const vLive = P.stateVerdict(mkPage({ globals: 'globalThis.game = { board: [[2, 0, 0, 0], [0, 0, 0, 0]], score: 0 };', canvas: canvasRect }).run());
+  assert.equal(vLive.kind, 'js');
+  assert.match(vLive.text, /if this state turns out empty, not the board.*read the board from pixels.*do not give up/, 'при canvas — всегда запасной путь');
+  // play2048.co (живой провал): служебный объект с полями «map»/«field»/«state», но без доски — не состояние, а пиксели
+  const vFake = P.stateVerdict(mkPage({ globals: 'globalThis.appConfig = { map: {}, field: "x", state: "ready", game: 1 };', canvas: canvasRect }).run());
+  assert.equal(vFake.kind, 'pixels', 'имя поля без доски внутри — не доска');
   // объект без доски (настройки) — не состояние
   assert.equal(P.stateVerdict(mkPage({ globals: 'globalThis.settings = { level: 1, game: "x", sound: true };' }).run()).kind, 'ui');
 

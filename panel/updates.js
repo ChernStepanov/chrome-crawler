@@ -54,7 +54,8 @@ const Updates = (() => {
   function fromSaved(info, current, repo) {
     if (!info || !newer(info.version, current)) return null;
     return { version: info.version, current, repo, message: info.message || '',
-      zip: `https://github.com/${repo}/archive/refs/heads/main.zip`, page: `https://github.com/${repo}` };
+      zip: `https://github.com/${repo}/archive/refs/heads/main.zip`, page: `https://github.com/${repo}`,
+      zipUrl: `https://codeload.github.com/${repo}/zip/refs/heads/main` };   // прямой архив, без переадресации — для «Обновиться»
   }
 
   return { check, newer, repoOf, CHECK_MS };
