@@ -10,7 +10,8 @@ const vm = require('node:vm');
 
 class FakeEl {
   constructor(tag) { this.tag = tag; this.children = []; this._text = ''; this.dataset = {}; this.hidden = false; this.className = ''; }
-  append(...n) { this.children.push(...n); }
+  append(...n) { for (const c of n) if (c && typeof c === 'object') c.parent = this; this.children.push(...n); }
+  remove() { if (this.parent) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); this.parent = null; } }
   set textContent(v) { this._text = String(v); this.children = []; }
   get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); }
   addEventListener() {}
@@ -333,9 +334,15 @@ export const crawlerBox = defineFeature(function(context is Context, id is Id, d
     assert.ok(copied[0].includes('fCuboid') && !copied[0].includes('FeatureScript 1;'), 'кнопка копирует код карточки');
     assert.ok(btn('Скопировано'), 'отклик на кнопке');
     btn('Создать в Onshape').onclick();
+    // построено — проверка человеком в Onshape до того, как модель пойдёт дальше
+    for (let i = 0; i < 100 && !btn('Работает'); i++) await sleep(10);
+    assert.ok(btn('Работает') && btn('Не работает'), 'после первой построенной версии — «Работает» / «Не работает»');
+    btn('Работает').onclick();
     const res = await p;
     assert.ok(!res.error, res.text);
     assert.match(res.text, /created in the Part Studio, status OK/);
+    assert.equal(res.finished, true, '«Работает» — задача закончена без модели');
+    assert.match(res.summary, /готова .*проверено вами в Onshape/);
     btn('Открыть Feature Studio').onclick();
     assert.deepEqual(opened, [[1, `https://cad.onshape.com/documents/${DID}/w/${WID}/e/${FS}`]], 'та же вкладка, адрес Feature Studio');
     assert.deepEqual(plain(mem.onshapeParts[DID].Box).fsEid, FS);
@@ -355,6 +362,8 @@ export const crawlerBox = defineFeature(function(context is Context, id is Id, d
     await sleep(10);
     assert.ok(btn('Обновить в Onshape'), 'повторный вызов — обновление');
     btn('Обновить в Onshape').onclick();
+    for (let i = 0; i < 100 && !btn('Работает'); i++) await sleep(10);
+    btn('Работает').onclick();                                   // каждая построенная версия — проверка человеком
     assert.match((await p2).text, /updated/);
     assert.match(fake.calls[fake.calls.length - 1].url, /featureid\/F1$/);
 
@@ -415,7 +424,12 @@ export const crawlerBox = defineFeature(function(context is Context, id is Id, d
     await sleep(10);
     assert.ok(container.textContent.includes('// length = 80 mm'), 'значения в карточке');
     btn('Создать в Onshape').onclick();
-    assert.ok(!(await pb).error);
+    for (let i = 0; i < 100 && !btn('Не работает'); i++) await sleep(10);
+    btn('Не работает').onclick();
+    const rb = await pb;
+    assert.ok(!rb.error);
+    assert.ok(!rb.finished, '«Не работает» — модель продолжает');
+    assert.match(rb.text, /pressed "Не работает".*Ask what exactly is wrong/);
     const sent = full.calls.find((c) => c.method === 'POST' && /\/features$/.test(c.url)).body.feature.parameters;
     assert.deepEqual(sent.map((p) => `${p.parameterId}=${p.expression}`).sort(), ['height=40 mm', 'length=80 mm', 'width=40 mm'], 'все параметры: явный и по умолчанию');
 

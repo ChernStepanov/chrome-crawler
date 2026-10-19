@@ -193,6 +193,17 @@ const SkriptCard = (() => {
         api.dock();
       },
       tele(text) { if (root.dataset.state === 'running') { tele.hidden = false; tele.textContent = text; } },
+      // «Работает» / «Не работает»: у работающего скрипта (первое — задача заканчивается, скрипт играет дальше;
+      // второе — скрипт останавливается, модель улучшает) и после итога (Onshape: деталь построена — проверьте).
+      // Возвращает функцию, убирающую вопрос (скрипт закончился раньше ответа).
+      verdict(onYes, onNo) {
+        const box = el('span', 'sc-verdict');
+        const off = () => box.remove();
+        box.append(button('Работает', 'primary', () => { off(); onYes(); }),
+          button('Не работает', '', () => { off(); onNo(); }));
+        actions.append(box);
+        return off;
+      },
       // Цель после правки человеком: { target, better } или null, если цели нет.
       goal() {
         if (!goalInput) return null;

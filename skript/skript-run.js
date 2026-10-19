@@ -196,6 +196,12 @@ const SkriptRun = (() => {
   // ключи localStorage с состоянием, найденные пробой страницы (панель): __crawler.saved читает только их
   const savedKeys = () => (deps.savedKeys ? deps.savedKeys() || [] : []);
 
+  // «Работает» / «Не работает»: кнопки в карточке, когда скрипт уже показал себя (проработал VERDICT_MS и сделал ход).
+  // «Работает» — задача заканчивается без модели, скрипт играет дальше сам (detached), отладчик на вкладке держится,
+  // пока он не закончится; «Не работает» — скрипт останавливается, модель получает «не работает — улучши».
+  const VERDICT_MS = 4000;
+  let detached = null;                                             // { tabId } — скрипт, отпущенный после «Да»
+
   async function execute(d, args, st) {
     const grants = SkriptMode.grants || {};
     const perms = d.permissions.filter((p) => p !== 'input' || grants.act);
@@ -203,25 +209,62 @@ const SkriptRun = (() => {
     try { origin = new URL(await deps.tabUrl(st.tabId)).origin; } catch (e) { /* служебная страница */ }
     // своя ссылка на карточку: по «Стоп» задача завершается сразу и обнуляет общую card (end), а раннер
     // дозакрывает карточку позже — через общую переменную карточка оставалась «работающей» навсегда
-    const c = card;
-    c.running(() => runner.stop('manual'));
+    const c = card, run = runner;
+    c.running(() => run.stop('manual'));
     const signal = deps.signal();
-    const onAbort = () => runner.stop('aborted');
+    const onAbort = () => run.stop('aborted');
     if (signal) signal.addEventListener('abort', onAbort);
     const y0 = await pageScrollY(st.tabId);
     const reader = startGoalReader(st.tabId, d.goal);
-    let s;
+    const item = { title: d.title, description: d.description, code: d.code, permissions: d.permissions.slice(), origin, goal: d.goal,
+      savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode };
     deps.onScript?.(true);                                           // скрипт работает — панель убирает щупальца со страницы
-    try { s = await runner.run({ code: d.code, args: args || {}, approved: true, permissions: perms, expectedOrigin: origin, savedKeys: savedKeys() }); }
-    finally { if (signal) signal.removeEventListener('abort', onAbort); deps.onScript?.(false); }
+    const runP = run.run({ code: d.code, args: args || {}, approved: true, permissions: perms, expectedOrigin: origin, savedKeys: savedKeys() });
+    // кнопки «Работает» / «Не работает» — когда показал себя; ответ человека или конец скрипта — что раньше
+    const t0 = Date.now();
+    let removeAsk = () => {}, timer = 0;
+    const answer = new Promise((resolve) => {
+      timer = setInterval(() => {
+        if (!run.running) { clearInterval(timer); return; }
+        if (Date.now() - t0 >= VERDICT_MS && run.actions > 0) { clearInterval(timer); removeAsk = c.verdict(() => resolve('yes'), () => resolve('no')); }
+      }, 250);
+    });
+    const first = await Promise.race([runP.then((s) => ({ s })), answer.then((a) => ({ a }))]);
+    clearInterval(timer);
+    removeAsk();
+    const release = () => { if (signal) signal.removeEventListener('abort', onAbort); };
+
+    if (first.a === 'yes') {
+      // задача заканчивается, скрипт — нет: доигрывает сам, карточка у поля ввода управляет им
+      release();
+      detached = { tabId: st.tabId };
+      const mine = detached;
+      runP.then((s) => {
+        reader.stop().catch(() => {});
+        lastSummary = s;
+        c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(run)}`, finishState(s));
+        offerAfter(item, c, st.tabId, s);
+      }).catch(() => {}).finally(async () => {
+        deps.onScript?.(false);
+        if (detached === mine) detached = null;
+        if (deps.release && !(deps.busy && deps.busy())) await deps.release();   // вне задачи отладчик не держим
+      });
+      return { text: 'The user confirmed the script works; it keeps running on its own. Task finished.', finished: true, success: true,
+        summary: `Скрипт «${d.title}» работает и играет дальше сам — остановить можно в карточке у поля ввода.` };
+    }
+    if (first.a === 'no') run.stop('manual');
+    let s;
+    try { s = first.s || await runP; }
+    finally { release(); deps.onScript?.(false); }
+    const userNo = first.a === 'no'
+      ? '\nThe user pressed "Не работает" (does not work): the script does not do what is needed. Improve it with patch_script (or ask the user what exactly is wrong); do not finish yet.' : '';
     if (s.reason === 'aborted' || (signal && signal.aborted)) {
       // задача остановлена: панель уже завершает её и отключает отладчик — замеры страницы не делаем,
       // карточку закрываем сразу («■ остановлен»), кнопки «Запустить снова»/«Сохранить» — на месте
       reader.stop().catch(() => {});
       lastSummary = s;
-      c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(runner)}`, 'stopped');
-      offerAfter({ title: d.title, description: d.description, code: d.code, permissions: d.permissions.slice(), origin, goal: d.goal,
-        savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode }, c, st.tabId, s);
+      c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(run)}`, 'stopped');
+      offerAfter(item, c, st.tabId, s);
       return { text: summaryText(s, d) };
     }
     const samples = await reader.stop();
@@ -229,11 +272,11 @@ const SkriptRun = (() => {
     lastSummary = s;
     const book = ledger || (ledger = SkriptEval.createLedger());
     const ev = book.record(d, s, samples, { scrolled: y0 !== null && y1 !== null && s.actions > 0 && Math.abs(y1 - y0) >= 100 });
-    c.finish(`${SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(runner)} · ${SkriptEval.line(ev, book)}`, finishState(s, ev.reached));
+    c.finish(`${first.a === 'no' ? 'Не работает (по вашему ответу)' : SkriptRunner.REASONS[s.reason] || s.reason} · ${fmtTele(run)} · ${SkriptEval.line(ev, book)}`,
+      first.a === 'no' ? false : finishState(s, ev.reached));
     // Копия кода на момент запуска: последующие патчи модели её не меняют.
-    offerAfter({ title: d.title, description: d.description, code: d.code, permissions: d.permissions.slice(), origin, goal: d.goal,
-      savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode }, c, st.tabId, s);
-    return { text: summaryText(s, d) + scrollHint(y0, y1, s) + SkriptEval.text(ev, book) };
+    offerAfter(item, c, st.tabId, s);
+    return { text: summaryText(s, d) + scrollHint(y0, y1, s) + SkriptEval.text(ev, book) + userNo };
   }
 
   // Запуск по кнопке человека («Запустить снова», сохранённый скрипт): без модели, нажатие — одобрение.
@@ -382,7 +425,7 @@ const SkriptRun = (() => {
       const dry = await run.run({ code: d.code, args: {}, dryRun: true, maxMs: 1200, permissions: ['read'], savedKeys: savedKeys() });
       if (dry.reason === 'bridge-unavailable') return deps.fail('Cannot reach the page to test the script (restricted page?). Tell the user.');
       if (!dry.ok || dry.errors.length) {
-        const errs = dry.errors.length ? dry.errors : [dry.reason];
+        const errs = dry.errors.length ? [...new Set(dry.errors)].slice(0, 3) : [dry.reason];   // одна ошибка в цикле — один раз, не четыре
         // пробный прогон без ввода: проверки «после хода что-то изменилось» в нём всегда падают — объяснить и не сдаваться
         const inputHint = /измен|change|move|ход|after|после/i.test(errs.join(' ')) ? ' The dry run sends NO input and the page does not change: skip checks like "the board changed after my move" while __crawler.dry is true.' : '';
         return deps.fail(`Dry run failed: ${errs.join('; ')}.${undefinedHint(errs)}${canvasHint(errs)}${inputHint} Fix it with patch_script and continue — one failed dry run is normal, do not finish the task.`);
@@ -455,6 +498,8 @@ const SkriptRun = (() => {
     TOOL_NAMES,
     tools: () => SkriptTools.build(TOOL_NAMES),
     begin() {
+      // новая задача /skript: отпущенный после «Работает» скрипт останавливается — иначе два скрипта на одной вкладке
+      if (detached && runner && runner.running) runner.stop('manual');
       drafts = SkriptTools.createDrafts(); ledger = SkriptEval.createLedger(); lastSummary = null; card = null; repairNote = '';
       // Нажали «Починить»: скрипт сразу черновик d1, модель видит его код и последнюю ошибку (promptAddon).
       if (pendingRepair) {
@@ -472,15 +517,17 @@ const SkriptRun = (() => {
     promptAddon: () => repairNote,
     prepareRepair,
     async end() {
-      if (runner && runner.running) await runner.stop('aborted');
+      if (runner && runner.running && !detached) await runner.stop('aborted');   // отпущенный после «Да» — играет дальше
       // на всякий случай: карточка, оставшаяся «работающей» (таймер, кнопка стопа, анимация мозга), — закрыть
-      if (card && card.root && card.root.dataset.state === 'running') card.finish('Остановлено вместе с задачей', 'stopped');
+      if (!detached && card && card.root && card.root.dataset.state === 'running') card.finish('Остановлено вместе с задачей', 'stopped');   // отпущенный — не трогаем
       drafts = null; ledger = null; card = null; repairNote = '';
     },
     // «Новый запуск»: лог очищен — карточек больше нет, реестр пуст.
     resetCards() { cards.clear(); draftCards.clear(); card = null; },
     // за эту задачу хоть один запуск скрипта делал ходы (не пробный прогон и не «только чтение»)
     acted() { return !!(lastSummary && lastSummary.actions > 0); },
+    // вкладка, где играет отпущенный скрипт: панель не отключает на ней отладчик в конце задачи
+    keepTab() { return detached && runner && runner.running ? detached.tabId : null; },
     handle,
     runSaved
   };

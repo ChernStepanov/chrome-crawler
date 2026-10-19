@@ -1534,9 +1534,15 @@ async function cdp(tabId, method, params = {}) {
   }
   return chrome.debugger.sendCommand({ tabId }, method, params);
 }
+// Скрипт, отпущенный после «Работает», ещё играет на своей вкладке — там отладчик нужен ему (клавиши, мост):
+// не отключаем; отключит сам скрипт-раннер, когда доиграет.
 async function cdpDetachAll() {
-  for (const id of cdpAttached) await chrome.debugger.detach({ tabId: id }).catch(() => {});
-  cdpAttached.clear();
+  const keep = SkriptRun.keepTab ? SkriptRun.keepTab() : null;
+  for (const id of [...cdpAttached]) {
+    if (id === keep) continue;
+    await chrome.debugger.detach({ tabId: id }).catch(() => {});
+    cdpAttached.delete(id);
+  }
 }
 chrome.debugger.onDetach.addListener((src) => cdpAttached.delete(src.tabId));
 
@@ -1661,10 +1667,11 @@ function stopSuck() {
 // Карточка скрипта ждёт «Запустить»: модель в это время не думает — в шапке ожидание человека, мозг «ждёт»,
 // щупальца уходят. Отклонил — модель продолжает, щупальца возвращаются; запустил — дальше их держит onScript.
 let askHero = null;
-function onAsk(on, decision) {
+// label — свой текст шапки (Onshape: «Проверьте деталь в Onshape»), по умолчанию — карточка скрипта
+function onAsk(on, decision, label) {
   if (on) {
     askHero = [$('heroTitle').textContent, $('heroSub').textContent];
-    setHero('Скрипт готов', 'Нажмите «Запустить» в карточке', 'wait');
+    setHero(label?.title || 'Скрипт готов', label?.sub || 'Нажмите «Запустить» в карточке', 'wait');
     showFigure('awaiting_confirmation');
     stopSuck();
     return;
@@ -2855,7 +2862,7 @@ SkriptRun.init({ hideFx: hideSuck, onScript, onAsk, savedKeys: () => skriptSaved
 SkriptUI.init({ textarea: ta, openLibrary: () => { openSheet('skillsSheet'); renderSkills(); } });
 Attachments.init({ composer: $('composer'), textarea: ta, list: $('attachList'), button: $('btnAttach'), input: $('attachInput') });
 PanelExtras.init({ textarea: ta, chip: () => SkriptUI.chip(), setChip: (id) => SkriptUI.set(id) });
-SkriptOnshape.init({ tabUrl, fail, container: $('log'), signal: () => abortCtl?.signal, log,
+SkriptOnshape.init({ tabUrl, fail, container: $('log'), signal: () => abortCtl?.signal, log, onAsk,
   openUrl: (tabId, url) => chrome.tabs.update(tabId, { url }),
   exec: (tabId, func, args) => chrome.scripting.executeScript({ target: { tabId }, func, args }) });
 SkriptLibrary.init({

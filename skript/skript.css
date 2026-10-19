@@ -147,3 +147,6 @@
 .lib-prefs { display: flex; align-items: center; gap: 8px; }
 .lib-prefs select { width: auto; }
 .lib-notes { min-height: 70px; }
+
+/* «Работает» / «Не работает» в карточке работающего скрипта */
+.sc-verdict { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }

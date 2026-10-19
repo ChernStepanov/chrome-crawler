@@ -630,7 +630,11 @@ const SkriptOnshape = (() => {
     const shown = hasCode ? prep.body + (valuesText ? `\n\n// Значения:\n${valuesText.replace(/^/gm, '// ')}` : '') : valuesText;
     const card = SkriptCard.create({ container: deps.container, title: `Onshape: ${name}`, version: existing ? 'обновление' : 'новая деталь',
       permissions: ['изменение документа Onshape'], code: shown });
-    const decision = await card.ask(deps.signal(), existing ? 'Обновить в Onshape' : 'Создать в Onshape');
+    // карточка ждёт одобрения: модель не думает — панель показывает ожидание человека, щупальца уходят
+    const btn = existing ? 'Обновить в Onshape' : 'Создать в Onshape';
+    deps.onAsk?.(true, null, { title: 'Код детали готов', sub: `Нажмите «${btn}» в карточке` });
+    let decision;
+    try { decision = await card.ask(deps.signal(), btn); } finally { deps.onAsk?.(false, decision === 'run' ? 'pending' : decision); }
     if (decision === 'abort') { card.finish('Остановлено', false); return { text: 'Task stopped by the user.' }; }
     if (decision === 'reject') { card.finish('Отклонено вами', false); return { text: 'The user rejected this FeatureScript; nothing was changed. Ask what to change.' }; }
     card.running(() => {});
@@ -676,9 +680,24 @@ const SkriptOnshape = (() => {
       const where = r.psName ? `Part Studio «${r.psName}»` : 'Part Studio';
       card.finish(`Готово: ${existing ? 'обновлено' : 'создано'} в ${where} (статус ${r.status}). Если Onshape показывает Feature Studio — откройте вкладку ${where}.`, true);
       addStudioLink();
-      return { text: `Done: feature "${name}" ${existing ? 'updated' : 'created'} in ${r.psName ? `Part Studio "${r.psName}"` : 'the Part Studio'}, status ${r.status}. Feature Studio "Crawler: ${name}". ` +
+      const done = `Done: feature "${name}" ${existing ? 'updated' : 'created'} in ${r.psName ? `Part Studio "${r.psName}"` : 'the Part Studio'}, status ${r.status}. Feature Studio "Crawler: ${name}". ` +
         'Onshape may have switched the view to the Feature Studio tab: tell the user the part is in the Part Studio. ' +
-        'The user can change its parameters in the feature dialog. To change the shape call onshape_featurescript again with the same name and new code; for new values pass params only.' };
+        'The user can change its parameters in the feature dialog. To change the shape call onshape_featurescript again with the same name and new code; for new values pass params only.';
+      // Первая построенная версия — проверка человеком в Onshape до того, как модель пойдёт дальше:
+      // «Работает» — задача закончена; «Не работает» — модель уточняет и исправляет.
+      const verdict = await new Promise((resolve) => {
+        const sig = deps.signal();
+        const off = card.verdict(() => resolve('yes'), () => resolve('no'));
+        deps.onAsk?.(true, null, { title: 'Проверьте деталь в Onshape', sub: 'Нажмите «Работает» или «Не работает» в карточке' });
+        if (sig) { if (sig.aborted) { off(); resolve('abort'); } else sig.addEventListener('abort', () => { off(); resolve('abort'); }, { once: true }); }
+      });
+      deps.onAsk?.(false, verdict === 'no' ? 'reject' : verdict);
+      if (verdict === 'abort') return { text: 'Task stopped by the user.' };
+      if (verdict === 'yes') {
+        return { text: done + '\nThe user checked the part in Onshape and pressed "Работает". Task finished.', finished: true, success: true,
+          summary: `Деталь «${name}» готова в ${where} — проверено вами в Onshape.` };
+      }
+      return { text: done + '\nThe user checked the part in Onshape and pressed "Не работает" (it is not what they need). Ask what exactly is wrong (ask_user) or fix the code; do not report success.' };
     }
     const key = `${loc.did}/${name}`;
     if (r.ok || r.stage !== 'regen') regenFails.delete(key); else regenFails.set(key, (regenFails.get(key) || 0) + 1);

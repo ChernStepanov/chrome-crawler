@@ -116,6 +116,13 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
   assert.equal(v1.kind, 'js');
   assert.match(v1.text, /localStorage\["gameState"\] \{grid, score, over, won\}/);
   assert.match(v1.text, /prefer it over pixels/);
+  // устройство сохранённого состояния (без значений): модель знает, что grid — объект с cells, а не массив
+  assert.equal(r1.storage[0].shape, '{grid: {size: number, cells: array[4] of array[4] of {value: number} or null}, score: number, over: boolean, won: boolean}');
+  assert.match(v1.text, /Its exact structure \(types only\): __crawler\.saved\("gameState"\) = \{grid: \{size: number, cells: array\[4\]/);
+  assert.ok(!/120|"value":2/.test(r1.storage[0].shape), 'в схеме только типы, без значений');
+  // пустая первая строка доски не прячет устройство клетки
+  const r1b = mkPage({ storage: { gameState: JSON.stringify({ grid: { cells: [[null, null], [null, { position: { x: 1, y: 1 }, value: 4 }]] } }) } }).run();
+  assert.match(r1b.storage[0].shape, /cells: array\[2\] of array\[2\] of \{position: \{x: number, y: number\}, value: number\} or null/);
 
   // переменные страницы с полями состояния
   const v2 = P.stateVerdict(mkPage({ globals: 'globalThis.game = { board: [[0, 2], [4, 0]], score: 0, level: 1, speed: 2 }; globalThis.cfg = { a: 1 };' }).run());

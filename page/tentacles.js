@@ -102,7 +102,7 @@
   // Акцент панели при автопалитре — это цвет самого сайта: без поправки щупальце сливается со страницей.
   // Поэтому тело подгоняется по яркости до контраста ≥ 3:1 с фоном страницы, «сок» (сгустки, присоски) —
   // ещё контрастнее, а под каждой точкой — тонкий ободок противоположной яркости (читается и поверх картинок).
-  let bg = [255, 255, 255], rim = 'rgba(0,0,0,0.3)';
+  let bg = [255, 255, 255];
   const mix = (c, m) => (dark ? c.map((v) => v + (255 - v) * m) : c.map((v) => v * (1 - m * 0.45))).map(Math.round);
   const light = (m) => (dark ? acc.map((c) => c + (255 - c) * m) : acc.map((c) => c * (1 - m * 0.6))).map(Math.round);   // «сок»: на тёмном — к белому, на светлом — глубже
   const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -118,8 +118,10 @@
   // фон задан на обёртке), иначе body/html, иначе белый
   // busy — фон задан картинкой/градиентом (сплошного цвета нет): яркость фона заранее не известна
   function pageBg() {
+    // картинка/градиент по дороге — отмечаем и ищем дальше сплошной фон страницы: по нему решаем, тёмная ли она
+    // (живой случай: Яндекс Музыка — в центре жёлто-пурпурное пятно на чёрной странице, щупальца темнели в оливковый)
     let el = document.elementFromPoint(innerWidth * 0.5, innerHeight * 0.5), busy = false;
-    for (let i = 0; el && i < 25; i++, el = el.parentElement) {
+    for (let i = 0; el && i < 40; i++, el = el.parentElement) {
       const c = parseBg(el);
       if (c) return { c, busy };
       if (getComputedStyle(el).backgroundImage !== 'none') busy = true;
@@ -149,7 +151,7 @@
   }
   function withContrast(c, min) {
     let [h, s2, l] = toHsl(c);
-    s2 = Math.max(s2, 0.6);                                       // серому/вялому акценту — цвет
+    s2 = Math.max(s2, 0.35);                                      // совсем серому акценту — немного цвета (иначе чёрно-белое)
     for (let i = 0; i <= 25; i++) {
       const x = fromHsl([h, s2, l]);
       if (contrast(x, bg) >= min) return x;
@@ -282,18 +284,14 @@
     if (Array.isArray(color)) acc = color;
     if (STYLES[st]) style = st;
     exitY = Math.max(24, Math.min(innerHeight - 24, typeof fromBottom === 'number' ? innerHeight - fromBottom : innerHeight * 0.45));
+    // цвет — акцентный цвет панели: на тёмной странице как есть; на светлой (и на пёстром фоне — картинка,
+    // градиент) — тот же оттенок темнее, до контраста ~2.5:1 с фоном. Без обводки точек.
+    // тёмная/светлая — по сплошному фону страницы (пятна и картинки поверх не в счёт); слабый акцент подтягивается:
+    // на светлой — темнее до ~2.5:1, на тёмной — светлее до 3:1; яркий остаётся как есть
     const pb = pageBg();
     bg = pb.c;
-    if (pb.busy) {
-      // пёстрый фон (картинка, градиент): глубокое тёмное тело + плотный белый ободок — читается на любом цвете
-      bg = [255, 255, 255]; dark = false;
-      acc = withContrast(acc, 6);
-      rim = 'rgba(255,255,255,0.85)';
-    } else {
-      dark = lum(bg) < 0.25;
-      acc = withContrast(acc, 3);                                 // тело — не меньше 3:1 к фону страницы
-      rim = dark ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.3)'; // ободок — противоположной яркости (на светлом — тонко: иначе тонкие линии бледнеют)
-    }
+    dark = lum(bg) < 0.25;
+    acc = withContrast(acc, dark ? 3 : 2.5);
   }
 
   // Один заход: до MAX щупалец разом, каждое держит T_SUCK. fromBottom — расстояние от мозга до низа панели:
@@ -407,15 +405,9 @@
       for (let s = 0; s <= steps * upto; s++) { const t = s / steps, p = along(pts, t); put(p.x, p.y, rad(t, p), val(t, p), tOf(t)); }
     };
     const paint = (alphaMul = 1) => {
-      const cr = GRID * 0.4;
-      // ободок под телом: отделяет щупальце от пёстрого фона (картинки, баннеры)
-      ctx.fillStyle = rim;
-      for (const [v, , cx, cy] of cells.values()) {
-        ctx.globalAlpha = alphaMul;
-        ctx.beginPath(); ctx.arc(cx, cy, (v > 1.15 ? cr * 1.25 : cr) + 0.9, 0, 6.2832); ctx.fill();
-      }
+      const cr = GRID * 0.46;                                       // крупнее — щупальце читается, а не сеткой
       for (const [v, t, cx, cy] of cells.values()) {
-        ctx.globalAlpha = Math.min(1, 0.45 + 0.55 * v) * alphaMul;
+        ctx.globalAlpha = Math.min(1, 0.75 + 0.25 * v) * alphaMul;   // плотнее: полупрозрачное терялось на тёмном
         // сгустки и кончики — «сок» (контрастнее тела), тело — акцент, поправленный под фон
         ctx.fillStyle = rgb(v > 1.15 ? light(0.55) : mix(acc, t * 0.5));
         ctx.beginPath(); ctx.arc(cx, cy, v > 1.15 ? cr * 1.25 : cr, 0, 6.2832); ctx.fill();
@@ -448,7 +440,7 @@
         const step = GRID * 3, sq = 0.05 * pull;
         for (let y = rc.y; y <= rc.y + rc.h + 0.1; y += step) for (let x = rc.x; x <= rc.x + rc.w + 0.1; x += step) {
           const edge = x < rc.x + step * 0.5 || y < rc.y + step * 0.5 || x > rc.x + rc.w - step * 0.5 || y > rc.y + rc.h - step * 0.5;
-          dot(x + (tipNow.x - x) * sq, y + (tipNow.y - y) * sq, net * (edge ? 0.85 : 0.22 + 0.25 * pull + 0.1 * hash(x, y + Math.floor(time * 12))), rgb(edge ? mix(acc, 0.3) : acc));
+          dot(x + (tipNow.x - x) * sq, y + (tipNow.y - y) * sq, net * (edge ? 0.95 : 0.4 + 0.25 * pull + 0.1 * hash(x, y + Math.floor(time * 12))), rgb(edge ? mix(acc, 0.3) : acc));
         }
         tint(rc, net * (0.07 + 0.08 * pull));
       }

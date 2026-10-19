@@ -8,7 +8,8 @@ const vm = require('node:vm');
 
 class FakeEl {
   constructor(tag) { this.tag = tag; this.children = []; this._text = ''; this.dataset = {}; this.hidden = false; this.className = ''; this.listeners = {}; }
-  append(...n) { this.children.push(...n); }
+  append(...n) { for (const c of n) if (c && typeof c === 'object') c.parent = this; this.children.push(...n); }
+  remove() { if (this.parent) { const i = this.parent.children.indexOf(this); if (i >= 0) this.parent.children.splice(i, 1); this.parent = null; } }
   set textContent(v) { this._text = String(v); this.children = []; }
   get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); }
   addEventListener() {}
@@ -201,6 +202,45 @@ function setup({ grants = { act: true } } = {}) {
     assert.equal(card.dataset.state, 'stopped', 'карточка закрыта («■ остановлен»), а не «работает»');
     assert.deepEqual(flags.scriptEvents, [true, false], 'и по «Стоп» панель узнаёт, что скрипт остановлен');
     assert.ok(btn(card, 'Запустить снова'), 'можно запустить снова');
+  }
+
+  // ---- 5в. «Работает»: задача заканчивается, скрипт играет дальше; «Не работает»: модель улучшает ----
+  {
+    const { R, container, input, clickBtn, flags, st } = setup();
+    const loopCode = 'const c = __crawler.loop(() => { __crawler.key("ArrowLeft"); }, { fps: 20 });';
+    const p = R.handle('write_script', { title: 'Игрок', code: loopCode }, st);
+    await sleep(1600);
+    clickBtn('Запустить');
+    await sleep(4600);                                   // показал себя: ≥ 4 с и есть ходы — появились кнопки
+    clickBtn('Работает');
+    const res = await p;
+    assert.equal(res.finished, true, 'задача заканчивается без модели');
+    assert.equal(res.success, true);
+    assert.match(res.summary, /играет дальше сам/);
+    await R.end();                                       // конец задачи не останавливает отпущенный скрипт…
+    assert.equal(R.keepTab(), 7, '…и панель не отключит отладчик на его вкладке');
+    const n = input.keys.length;
+    await sleep(300);
+    assert.ok(input.keys.length > n, 'скрипт продолжает играть после конца задачи');
+    clickBtn('Стоп');                                    // остановить можно из карточки
+    await sleep(100);
+    const card = container.children[0];
+    assert.equal(card.dataset.state, 'stopped');
+    assert.equal(R.keepTab(), null);
+    assert.equal(flags.released, 1, 'доиграл — отладчик отпущен');
+    assert.ok(container.find((e) => e.tag === 'button' && e.textContent === 'Запустить снова'), 'после — «Запустить снова»');
+  }
+  {
+    const { R, container, clickBtn, st } = setup();
+    const p = R.handle('write_script', { title: 'Игрок', code: 'const c = __crawler.loop(() => { __crawler.key("ArrowUp"); }, { fps: 20 });' }, st);
+    await sleep(1600);
+    clickBtn('Запустить');
+    await sleep(4600);
+    clickBtn('Не работает');
+    const res = await p;
+    assert.ok(!res.finished, 'модель думает дальше');
+    assert.match(res.text, /Не работает.*Improve it with patch_script/);
+    assert.equal(container.children[0].dataset.state, 'fail');
   }
 
   // ---- 6. После «Стоп» и конца задачи: «Запустить снова» без модели, сохранение, запуск сохранённого ----

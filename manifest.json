@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chrome crawler",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "author": "ir00nman",
   "homepage_url": "https://github.com/ir00nman/chrome-crawler",
   "description": "Chrome crawler — LLM-агент, который выполняет задачи в вашем браузере.",
