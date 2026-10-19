@@ -21,7 +21,8 @@
 // под мозгом: вылетает из ядра и втягивается обратно; send/take(x, y) — сгусток из мозга к точке и обратно;
 // suck(n, hold)/unsuck() — пучок щупалец к краю (к странице): разово или пока модель работает.
 (() => {
-  const CELL = 2.5;                 // шаг экранной сетки, CSS px (меньше — выше разрешение)
+  let CELL = 2.5;                   // шаг экранной сетки, CSS px (меньше — выше разрешение); setCell — для видео/демо
+  let demo = false;                 // демо (видео): «работает» — быстрее вращение и искры, без приглушения
   const ASSEMBLE_MS = 1700;       // прорисовка сети при появлении
   const SPIN = 0.16;              // рад/с вокруг вертикали
   const FPS_IDLE = 60, FPS_BEHIND = 60;   // WebGL дешёвый — 60 и за логом (2D-запас сам по себе медленнее)
@@ -105,8 +106,8 @@
     if (mood.walk < 0.3 || !model) { walkers = []; sparks = []; return; }
     if (scriptOn) { walkers = []; stepSparks(dt); return; }        // скрипт — короткие искры-цепочки, без вспышек вершин
     sparks = [];
-    const running = document.body && document.body.classList.contains('running');
-    const st = document.body ? document.body.dataset.state : '';
+    const running = demo || (document.body && document.body.classList.contains('running'));
+    const st = demo ? 'working' : document.body ? document.body.dataset.state : '';
     [WALKERS, WALK_SPEED] = scriptOn ? SPARKS.script : running ? (st === 'working' ? SPARKS.working : SPARKS.thinking) : SPARKS.calm;
     if (walkers.length > WALKERS) walkers.length = WALKERS;
     while (walkers.length < WALKERS) {
@@ -214,6 +215,7 @@
     if (now - scriptCheckAt > 400) { scriptOn = !!document.querySelector('.skript-card[data-state="running"]'); scriptCheckAt = now; }
     const st = document.body ? document.body.dataset.state : 'idle';
     const running = document.body && document.body.classList.contains('running');
+    if (demo) return MOODS.working;                                  // демо: бодрое вращение и искры
     if (absorb) return MOODS.absorbing;                              // выкачивание — без искр, чтобы эффекты не смешивались
     if (now < thinkUntil && running && st !== 'awaiting_confirmation' && st !== 'error') return MOODS.thinking;
     if (st === 'error' && moodName !== 'error') { errorAt = now; react('error'); }
@@ -388,7 +390,7 @@
     for (const st of stars) {
       const vis = smooth((since - st.appear * 0.2) / (ALIVE_S * 0.8));         // вместе с оживанием, с лёгким разбросом
       if (vis <= 0) continue;
-      const a = vis * st.base * (0.55 + 0.45 * Math.sin(time * st.tw + st.ph)) * dim;
+      const a = vis * st.base * (0.55 + 0.45 * Math.sin(time * st.tw + st.ph)) * dim * (1 - fadeK);
       if (a <= 0.02) continue;
       const x = ((st.x - drift) % 1 + 1) % 1 * w, y = st.y * h, r = st.r * dpr;
       if (st.tint) emit(x, y, r * 2, AR, AG, AB, a, 0); else emit(x, y, r * 2, IR, IG, IB, a, 0);
@@ -519,8 +521,9 @@
   }
 
   // Свечение за ядром — CSS-фон холста (бесплатно для кадра); стиль меняем, только когда он заметно изменился.
-  let glowCss = '';
+  let glowCss = '', lastGlow = null;
   function setGlow(cx, cy, rad, r, g, b, a, dpr) {
+    lastGlow = { x: cx / dpr, y: cy / dpr, rad: rad / dpr, r, g, b, a };   // для записи видео: свечение не на холсте
     const css = a < 0.005 ? 'none' : `radial-gradient(circle at ${Math.round(cx / dpr)}px ${Math.round(cy / dpr)}px, rgba(${r},${g},${b},${a.toFixed(3)}) 0, rgba(${r},${g},${b},0) ${Math.round(rad / dpr)}px)`;
     if (css !== glowCss) { glowCss = css; canvas.style.background = css; }
   }
@@ -548,7 +551,10 @@
     const cell = Math.max(2, Math.round(CELL * dpr));
     // отъезд камеры — ease-out: быстрый старт и плавная посадка на место
     const zt = Math.min(1, Math.max(0, aliveT(now) / ALIVE_S));
-    const zoom = reduce() ? 1 : 1 + ZOOM_IN * Math.pow(1 - zt, 3);
+    // исчезание (vanish): камера чуть наезжает, перо стирает сеть в обратном порядке, звёзды и свечение гаснут
+    const vk = vanishAt ? Math.min(1, Math.max(0, (now - vanishAt) / vanishMs)) : 0;
+    fadeK = vk;
+    const zoom = (reduce() ? 1 : 1 + ZOOM_IN * Math.pow(1 - zt, 3)) * (1 + 0.18 * ease(vk));
     const live = liveAt(now);
     const sq = squeeze ? Math.max(0, (now - squeeze.start) / squeeze.dur) : 1;
     if (squeeze && sq >= 1) squeeze = null;
@@ -569,7 +575,7 @@
     const bar = running && document.getElementById('progressBar');
     const progress = bar ? Math.min(1, (parseFloat(bar.style.width) || 0) / 100) : 0;
     const time = now / 1000;
-    const assemble = reduce() ? 1 : Math.min(1, (now - startAt) / ASSEMBLE_MS);
+    const assemble = vanishAt ? 1 - vk : reduce() ? 1 : Math.min(1, (now - startAt) / ASSEMBLE_MS);
     const ca = Math.cos(angle), sa = Math.sin(angle), tilt = 0.32 + Math.sin(time * 0.21) * 0.08 * live, ct = Math.cos(tilt), stt = Math.sin(tilt);
     // Сетка клеток в типизированных массивах (без тысяч объектов на кадр): яркость, глубина и список занятых клеток.
     const GW = Math.ceil(w / cell) + 2, GH = Math.ceil(h / cell) + 2, size = GW * GH;
@@ -624,7 +630,7 @@
     model.nodes.forEach((n) => {
       // Набор по пикселю: каждая клетка сгустка загорается в свой момент (вразнобой, ближе к центру — раньше),
       // свежая клетка на миг ярче — узел «проявляется», а не выпрыгивает.
-      const grow = reduce() ? 1 : (now - startAt - n.appear * ASSEMBLE_MS) / NODE_GROW_MS;
+      const grow = vanishAt ? (assemble - n.appear) * ASSEMBLE_MS / NODE_GROW_MS : reduce() ? 1 : (now - startAt - n.appear * ASSEMBLE_MS) / NODE_GROW_MS;
       if (grow <= 0) return;
       const q = project(n.x, n.y, n.z);
       const fr = n.fireAt ? (now - n.fireAt) / 320 : 9;
@@ -965,7 +971,7 @@
     // сон: минута без действий, без задачи и подключения — плавно засыпает (≈3 с), просыпается быстро
     const asleep = !running && !absorb && now - activeAt > SLEEP_AFTER;
     sleep += ((asleep ? 1 : 0) - sleep) * Math.min(1, dt * (asleep ? 0.35 : 4));
-    const target = (absorb ? 0.9 : scriptOn ? 1 : running ? 0.65 : behindLog ? (light ? 0.25 : 0.32) : 1) * (1 - 0.5 * sleep);   // скрипт работает — сеть видна полностью
+    const target = demo ? 1 : (absorb ? 0.9 : scriptOn ? 1 : running ? 0.65 : behindLog ? (light ? 0.25 : 0.32) : 1) * (1 - 0.5 * sleep);   // скрипт работает — сеть видна полностью
     dim += (target - dim) * Math.min(1, dt * 2.5);
     const pk = (now - pokeAt) / 500;                               // «тик» от переключателей: короткий подкрут
     const poke = reduce() || pk < 0 || pk > 1 ? 0 : 3 * Math.sin(Math.PI * pk);
@@ -996,8 +1002,13 @@
     play();
   }
 
+  // Исчезание — зеркально появлению: перо стирает линии в обратном порядке, вершины тают, звёзды и свечение гаснут.
+  let vanishAt = 0, vanishMs = 1700, fadeK = 0;
+  function vanish(ms = 1700) { if (canvas) { vanishMs = ms; vanishAt = performance.now(); } }
+
   function play() {
     if (!canvas) return;
+    vanishAt = 0; fadeK = 0;
     startAt = performance.now();
     cancelAnimationFrame(raf);
     if (reduce()) { readColor(); render(startAt + ASSEMBLE_MS); return; }   // меньше движения — один кадр
@@ -1201,5 +1212,9 @@
   function redraw() { if (canvas) { readColor(); if (reduce()) render(performance.now()); } }
   function flow() { colorAt = 0; }   // следующий кадр возьмёт новый цвет
 
-  window.CrawlerArt = { init, play, redraw, flow, react, reach, suck, unsuck, send, take, say: sayText };
+  // Для видео/демо: шаг сетки (крупнее — точки как в панели при большом кадре) и бодрый режим без приглушения.
+  function setCell(px) { CELL = Math.max(1, Number(px) || 2.5); }
+  function setDemo(on) { demo = !!on; }
+
+  window.CrawlerArt = { init, play, redraw, flow, react, reach, suck, unsuck, send, take, say: sayText, vanish, glow: () => lastGlow, setCell, setDemo };
 })();

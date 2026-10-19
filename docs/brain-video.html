@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мозг: видео</title>
+<!--
+  Появление мозга (art/art-net.js — тот же рисунок, что в панели) и выключение «как у старого телевизора» на чёрном фоне,
+  кадр 1920×1080. Точки — в той же пропорции к мозгу, что в боковой панели (шаг сетки масштабируется).
+  «Записать» — видео прямо из страницы (кадры собираются на отдельном холсте вместе со свечением): MP4, если Chrome
+  умеет, иначе WebM. ?render=1 — покадровый режим без интерфейса: время задаёт renderFrame(ms) (ровный MP4 через ffmpeg).
+-->
+<script>
+  // покадровый режим: часы и кадры — под управлением renderFrame, до загрузки рисунка
+  const RENDER = new URLSearchParams(location.search).has('render');
+  if (RENDER) {
+    let now = 0; const cbs = [];
+    performance.now = () => now;
+    window.requestAnimationFrame = (f) => { cbs.push(f); return cbs.length; };
+    window.cancelAnimationFrame = () => {};
+    window.renderFrame = (ms) => { now = ms; for (const f of cbs.splice(0)) f(now); timeline(now); return true; };
+  }
+</script>
+<style>
+  :root { --acc: #ffffff; --txt: #ffffff; --warn: #f5a524; --critical: #ef5350; --ok: #2fa56b; color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #e8e9ee; font: 13px system-ui, -apple-system, sans-serif; }
+  body { overflow: hidden; }
+  /* кадр 1920×1080 в CSS-пикселях, на экране вписан в окно */
+  #frame { width: 1920px; height: 1080px; position: absolute; left: 50%; top: calc(50% - 36px); transform-origin: center; background: #000; overflow: hidden; }
+  #stage { position: absolute; inset: 0; transform-origin: 50% 46%; }
+  #art { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* вспышка выключения — поверх, в точке, куда схлопнулась картинка */
+  #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+  .bar { position: fixed; left: 16px; right: 16px; bottom: 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center;
+    padding: 10px 14px; border-radius: 999px; background: rgba(20, 21, 26, 0.85); border: 1px solid #2a2c33; backdrop-filter: blur(8px); }
+  .bar label { display: inline-flex; gap: 6px; align-items: center; color: #9b9b9b; }
+  .bar input[type=number] { width: 64px; background: #1b1c22; color: #e8e9ee; border: 1px solid #2a2c33; border-radius: 8px; padding: 4px 6px; font: inherit; }
+  .bar input[type=color] { width: 32px; height: 24px; border: 0; background: none; padding: 0; }
+  .bar button { background: #e8e9ee; color: #111; border: 0; border-radius: 999px; padding: 6px 14px; font: 600 13px system-ui; cursor: pointer; }
+  .bar button.rec { background: #ef5350; color: #fff; }
+  .bar button:disabled { opacity: .5; cursor: default; }
+  #status { color: #9b9b9b; min-width: 160px; }
+  #status a { color: #fff; }
+  body.render .bar { display: none; }
+  body.render #frame { left: 0; top: 0; transform: none !important; }
+</style>
+</head>
+<body>
+<div id="frame"><div id="stage"><canvas id="art"></canvas></div><canvas id="flash" width="1920" height="1080"></canvas></div>
+<div class="bar">
+  <label>Цвет <input type="color" id="color" value="#ffffff"></label>
+  <label>Живёт, с <input type="number" id="hold" value="3" min="0" max="30" step="0.5"></label>
+  <button id="play" type="button">▶ Проиграть</button>
+  <button id="rec" class="rec" type="button">⏺ Записать</button>
+  <span id="status"></span>
+</div>
+<script src="../art/art-net.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const art = $('art'), frame = $('frame'), stage = $('stage'), flash = $('flash'), fctx = flash.getContext('2d');
+  if (RENDER) document.body.classList.add('render');
+
+  const fit = () => { if (!RENDER) frame.style.transform = `translate(-50%, -50%) scale(${Math.min(innerWidth / 1920, (innerHeight - 80) / 1080)})`; };
+  addEventListener('resize', fit); fit();
+
+  const q = new URLSearchParams(location.search);
+  if (q.get('color')) $('color').value = '#' + q.get('color').replace('#', '');
+  if (q.get('hold')) $('hold').value = q.get('hold');
+  const applyColor = () => { const c = $('color').value; document.documentElement.style.setProperty('--acc', c); CrawlerArt.flow(); };
+  $('color').addEventListener('input', applyColor);
+
+  // Точки как в боковой панели: мозг в кадре во столько же раз крупнее, во сколько крупнее шаг сетки.
+  // Радиус сети: min(w, 0.92·h)·0.36; панель ~380×560, кадр 1920×1080.
+  const R = (w, h) => Math.min(w, h * 0.92) * 0.36;
+  CrawlerArt.setCell(2.5 * R(1920, 1080) / R(380, 560));
+
+  // Сценарий: появление (прорисовка ~1,7 с + оживание ~1,1 с) → живёт бодро → выключение ТВ → чёрный хвост.
+  const APPEAR = 2900, TV = { squash: 180, shrink: 200, flash: 650 }, TAIL = 400;
+  const holdMs = () => Number($('hold').value) * 1000;
+  const offAt = () => APPEAR + holdMs();
+  const total = () => offAt() + TV.squash + TV.shrink + TV.flash + TAIL;
+  let t0 = 0;
+  const easeIn = (t) => t * t * t, easeOut = (t) => 1 - Math.pow(1 - t, 3), cl = (t) => Math.max(0, Math.min(1, t));
+
+  // Выключение «как у старого ТВ»: картинка схлопывается по вертикали в яркую белую линию, линия сжимается в точку
+  // в центре, точка коротко вспыхивает и гаснет. Возвращает { sx, sy, bright, line, dot } для момента k (мс от начала).
+  //   line — яркость линии (0..1), lineW — её доля ширины кадра; dot — яркость точки-вспышки.
+  function tvAt(k) {
+    if (k < 0) return { sx: 1, sy: 1, bright: 1, line: 0, lineW: 0, dot: 0, gone: false };
+    if (k < TV.squash) {
+      const f = easeIn(k / TV.squash);
+      return { sx: 1 + 0.06 * f, sy: Math.max(0.004, 1 - f), bright: 1 + 3 * f, line: f > 0.6 ? (f - 0.6) / 0.4 : 0, lineW: 0.42, dot: 0, gone: false };
+    }
+    k -= TV.squash;
+    if (k < TV.shrink) {
+      const f = easeIn(k / TV.shrink);
+      return { sx: 0, sy: 0, bright: 0, line: 1, lineW: Math.max(0.004, 0.42 * (1 - f)), dot: 0.5 * f, gone: true };
+    }
+    k -= TV.shrink;
+    const f = Math.max(0, Math.min(1, k / TV.flash));
+    return { sx: 0, sy: 0, bright: 0, line: 0, lineW: 0, dot: f < 0.12 ? 0.5 + 0.5 * (f / 0.12) : 1 - easeOut((f - 0.12) / 0.88), gone: true };
+  }
+  // линия и точка-вспышка: плотная белая сердцевина, небольшой ореол
+  function drawFlash(ctx, t, W, H) {
+    ctx.clearRect(0, 0, W, H);
+    const x = W / 2, y = H * 0.46;
+    if (t.line > 0.003) {
+      const half = W * t.lineW / 2;
+      const lg = ctx.createLinearGradient(x - half, 0, x + half, 0);
+      lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(0.15, `rgba(255,255,255,${t.line})`);
+      lg.addColorStop(0.85, `rgba(255,255,255,${t.line})`); lg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = lg; ctx.fillRect(x - half, y - 2, half * 2, 4);
+      ctx.globalAlpha = 0.35 * t.line; ctx.fillRect(x - half, y - 6, half * 2, 12); ctx.globalAlpha = 1;   // лёгкое свечение линии
+    }
+    if (t.dot > 0.003) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 140);
+      g.addColorStop(0, `rgba(255,255,255,${t.dot})`); g.addColorStop(0.06, `rgba(255,255,255,${t.dot})`);
+      g.addColorStop(0.18, `rgba(255,255,255,${0.35 * t.dot})`); g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g; ctx.fillRect(x - 140, y - 140, 280, 280);
+    }
+  }
+  let tv = tvAt(-1);
+  function timeline(now) {
+    const t = now - t0;
+    CrawlerArt.setDemo(t > 1800 && t < offAt());                       // пока живёт — бодро (искры, быстрее вращение)
+    tv = tvAt(t - offAt());
+    stage.style.transform = `scale(${tv.sx}, ${tv.sy})`;
+    stage.style.filter = tv.bright !== 1 ? `brightness(${tv.bright})` : '';
+    stage.style.visibility = tv.gone ? 'hidden' : '';
+    flash.style.opacity = 1;
+    drawFlash(fctx, tv, 1920, 1080);
+  }
+  function start() { applyColor(); t0 = performance.now(); CrawlerArt.setDemo(false); CrawlerArt.play(); }
+
+  CrawlerArt.init(art);
+  applyColor();
+  if (RENDER) { window.totalMs = total(); start(); }
+  else { (function loop() { timeline(performance.now()); requestAnimationFrame(loop); })(); start(); }
+  $('play').onclick = start;
+
+  // ---- Запись: кадр = чёрный фон + (свечение + рисунок, сжатые как ТВ) + вспышка ----
+  $('rec').onclick = async () => {
+    const W = 1920, H = 1080, comp = document.createElement('canvas');
+    comp.width = W; comp.height = H;
+    const ctx = comp.getContext('2d');
+    const types = ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    const type = types.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+    if (!type) { $('status').textContent = 'Браузер не умеет записывать видео'; return; }
+    const rec = new MediaRecorder(comp.captureStream(60), { mimeType: type, videoBitsPerSecond: 16e6 });
+    const chunks = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    let on = true;
+    const draw = () => {
+      if (!on) return;
+      const k = W / art.clientWidth;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.filter = 'none';
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      if (!tv.gone) {
+        const ox = W / 2, oy = H * 0.46;
+        ctx.setTransform(tv.sx, 0, 0, tv.sy, ox - ox * tv.sx, oy - oy * tv.sy);
+        if (tv.bright !== 1) ctx.filter = `brightness(${tv.bright})`;
+        const g = CrawlerArt.glow && CrawlerArt.glow();
+        if (g && g.a > 0.005) {
+          const grd = ctx.createRadialGradient(g.x * k, g.y * k, 0, g.x * k, g.y * k, g.rad * k);
+          grd.addColorStop(0, `rgba(${g.r},${g.g},${g.b},${g.a})`); grd.addColorStop(1, `rgba(${g.r},${g.g},${g.b},0)`);
+          ctx.fillStyle = grd; ctx.fillRect(0, 0, W, H);
+        }
+        ctx.drawImage(art, 0, 0, W, H);
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = 'none';
+      ctx.drawImage(flash, 0, 0, W, H);
+      requestAnimationFrame(draw);
+    };
+    $('rec').disabled = $('play').disabled = true;
+    $('status').textContent = 'Запись…';
+    rec.start();
+    start();
+    draw();
+    await new Promise((r) => setTimeout(r, total()));
+    on = false;
+    rec.stop();
+    await new Promise((r) => (rec.onstop = r));
+    const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    const url = URL.createObjectURL(new Blob(chunks, { type }));
+    $('status').innerHTML = `Готово: <a href="${url}" download="brain.${ext}">скачать brain.${ext}</a>` + (ext === 'webm' ? ' (в MP4: ffmpeg -i brain.webm brain.mp4)' : '');
+    $('rec').disabled = $('play').disabled = false;
+  };
+</script>
+</body>
+</html>
