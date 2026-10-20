@@ -147,6 +147,15 @@ function skriptCreateDrafts() {
       return { ok: true, id: d.id, version: d.version };
     },
     approve(id) { const d = pick(id); if (!d) return false; d.approved = true; return true; },
+    // Скрипт сохранили в библиотеку: запомнить id и код, чтобы повторный запуск черновика
+    // предлагал «Обновить в библиотеке», а не создавал вторую запись.
+    setSavedId(id, savedId, code) {
+      const d = pick(id);
+      if (!d) return false;
+      d.savedId = savedId || null;
+      d.savedCode = code !== undefined ? code : d.code;
+      return true;
+    },
     // «Починить»: скрипт из прошлой задачи или библиотеки становится черновиком этой задачи (правки — patch_script).
     adopt({ title, description, code, goal, savedId, version } = {}) {
       const c = check(code);
@@ -156,7 +165,7 @@ function skriptCreateDrafts() {
         id, title: String(title || 'Скрипт').slice(0, 120), description: String(description || '').slice(0, 400),
         code, params: { type: 'object', properties: {}, required: [] }, goal: goal || null,
         permissions: SkriptContract.declaredPermissions(code), version: Number(version) || 1, patches: 0, history: [],
-        approved: false, savedId: savedId || null, adoptedCode: code
+        approved: false, savedId: savedId || null, adoptedCode: code, savedCode: code
       };
       drafts.set(id, d);
       last = id;

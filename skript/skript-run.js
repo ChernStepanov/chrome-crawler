@@ -217,7 +217,7 @@ const SkriptRun = (() => {
     const y0 = await pageScrollY(st.tabId);
     const reader = startGoalReader(st.tabId, d.goal);
     const item = { title: d.title, description: d.description, code: d.code, permissions: d.permissions.slice(), origin, goal: d.goal,
-      savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode };
+      draftId: d.id, savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.savedCode };
     deps.onScript?.(true);                                           // скрипт работает — панель убирает щупальца со страницы
     const runP = run.run({ code: d.code, args: args || {}, approved: true, permissions: perms, expectedOrigin: origin, savedKeys: savedKeys() });
     // кнопки «Работает» / «Не работает» — когда показал себя; ответ человека или конец скрипта — что раньше
@@ -314,6 +314,7 @@ const SkriptRun = (() => {
       });
     } catch (e) { c.note('Не сохранено: ' + e.message); return; }
     item.savedId = r.skill.id;
+    if (item.draftId && drafts) drafts.setSavedId(item.draftId, item.savedId, item.code);
     cards.set('saved:' + r.skill.id, c);   // запуск из библиотеки потом найдёт эту же карточку
     item.changed = false;   // библиотека теперь хранит этот код
     if (r.warning) c.note(r.warning);

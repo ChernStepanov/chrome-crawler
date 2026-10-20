@@ -479,5 +479,26 @@ function setup({ grants = { act: true } } = {}) {
     assert.equal(container.children.filter((n) => /sc-slot/.test(n.className)).length, 0, 'висячих якорей нет');
   }
 
+  // ---- Сохранение черновика и повторный запуск: библиотечная запись не дублируется ----
+  {
+    const { R, container, clickBtn, Store, st } = setup();
+    const btn = (root, label) => root.find((e) => e.tag === 'button' && e.textContent === label);
+    const code = '__crawler.key("ArrowUp"); __crawler.done({ ok: true });';
+    const p = R.handle('write_script', { title: 'Разовый', code }, st);
+    await sleep(1600);
+    clickBtn('Запустить');
+    assert.match((await p).text, /Готово/);
+    const card = container.children[0];
+    btn(card, 'Сохранить для сайта').onclick();
+    await sleep(60);
+    assert.equal((await Store.list()).length, 1, 'скрипт сохранён');
+    assert.ok(btn(card, 'Сохранено'), 'после сохранения кнопка это показывает');
+    // повторный запуск того же черновика (моделью через run_script) помнит библиотечную запись
+    const again = await R.handle('run_script', {}, st);
+    assert.match(again.text, /Готово/);
+    assert.ok(btn(card, 'Сохранено'), 'черновик помнит id библиотечной записи');
+    assert.equal((await Store.list()).length, 1, 'дубль не создан');
+  }
+
   console.log('skript-run.test.js: OK');
 })().catch((e) => { console.error('FAIL:', e); process.exit(1); });
