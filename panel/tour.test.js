@@ -56,4 +56,16 @@ for (const g of LAYOUTS) {
       assert.ok(!crosses(R[i][a], R[i][a + 1], R[j][b], R[j][b + 1]), `${g.w}px: линии «${NAMES[i]}» и «${NAMES[j]}» пересекаются`);
 }
 
+// ---- Кэш маршрутов: геометрия строится один раз на шаг, а не каждый кадр анимации ----
+{
+  let n = 0;
+  const m = T.memoRoutes(() => { n++; return [{ pts: [{ x: 0, y: 0 }], segs: [], total: 0 }]; });
+  const a = m.get(), b = m.get();
+  assert.equal(n, 1, 'build вызван один раз');
+  assert.equal(a, b, 'повторный get отдаёт тот же результат');
+  m.reset();
+  m.get();
+  assert.equal(n, 2, 'после reset геометрия пересчитана');
+}
+
 console.log('tour.test.js: OK');

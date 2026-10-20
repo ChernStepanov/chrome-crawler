@@ -140,7 +140,14 @@ const Tour = (() => {
   const LINK_MS = 420, LINK_STAGGER = 110, LANE = CELL * 2;   // дорожки — через клетку, чтобы линии не сливались
   const PAD = 50;                                                 // правый отступ карточки с линиями (.tour-card.has-links)
   let lk = null, lg = null, links = [];
-  function routes() {
+  // Геометрия линий зависит только от шага и размеров панели, а drawLinks зовётся каждый кадр анимации.
+  // Раньше routes() на каждом кадре делал querySelector и Range.getClientRects() для всех строк — кэшируем
+  // до следующего render() (смена шага/размера окна), длины отрезков считаем один раз.
+  function memoRoutes(build) {
+    let cache = null;
+    return { get() { if (!cache) cache = build(); return cache; }, reset() { cache = null; } };
+  }
+  function buildRoutes() {
     const items = links.map((l) => {
       const b = document.querySelector(l.target)?.getBoundingClientRect();
       const rects = (() => { const rg = document.createRange(); rg.selectNodeContents(l.row); return [...rg.getClientRects()]; })();
@@ -148,8 +155,13 @@ const Tour = (() => {
       return b && b.width ? { a: { x: last.right + 5, y: last.top + last.height / 2 }, bx: b.left + b.width / 2, by: b.bottom + 3 } : null;
     });
     const out = layoutLinks(items, { cr: card.offsetLeft + card.offsetWidth, ct: card.offsetTop, width: innerWidth });
-    return out.map((pts) => (pts ? { pts: rounded(pts) } : null));
+    return out.map((pts) => {
+      if (!pts) return null;
+      const p = rounded(pts), segs = p.slice(1).map((q, k) => Math.hypot(q.x - p[k].x, q.y - p[k].y));
+      return { pts: p, segs, total: segs.reduce((a, b) => a + b, 0) };
+    });
   }
+  const routeCache = memoRoutes(buildRoutes);
   // Маршруты линий (без скруглений): items — [{ a: конец строки, bx, by: низ кнопки } | null] в порядке строк,
   // cr/ct — правый и верхний край карточки, width — ширина окна. Чистая функция (тесты: tour.test.js).
   function layoutLinks(items, { cr, ct, width }) {
@@ -209,11 +221,11 @@ const Tour = (() => {
     lg.clearRect(0, 0, W, H);
     if (moving || !links.length) return;
     const t0 = frame.start + FLOW_MS, cells = new Map();
-    routes().forEach((it, j) => {
+    routeCache.get().forEach((it, j) => {
       if (!it) return;
       const grow = reduce() ? 1 : ease((now - t0 - j * LINK_STAGGER) / LINK_MS);
       if (grow <= 0) return;
-      const segs = it.pts.slice(1).map((p, k) => Math.hypot(p.x - it.pts[k].x, p.y - it.pts[k].y)), total = segs.reduce((a, b) => a + b, 0);
+      const { segs, total } = it;
       for (let d = 0; d <= total * grow; d += CELL / 2) {
         let rest = d, k = 0;
         while (k < segs.length - 1 && rest > segs[k]) { rest -= segs[k]; k++; }
@@ -274,6 +286,7 @@ const Tour = (() => {
     const bottom = Math.min(innerHeight - 8, innerHeight / 2 + 130);
     Object.assign(card.style, { left: Math.max(8, (innerWidth - card.offsetWidth) / 2) + 'px', top: Math.max(8, bottom - card.offsetHeight) + 'px' });
     card.classList.remove('in'); void card.offsetWidth; card.classList.add('in');
+    routeCache.reset();                                             // новый шаг/размер — пересчитать геометрию линий
     next.focus({ preventScroll: true });
     // рамка: вокруг кнопки шага (с вырезом в затемнении); шаг без кнопки — вокруг карточки, без выреза
     if (r) aim(r, true);
@@ -329,6 +342,7 @@ const Tour = (() => {
     const r = root;
     cancelAnimationFrame(raf); raf = 0;
     root = card = fx = g = lk = lg = null; frame = null; links = [];
+    routeCache.reset();
     r.classList.add('out');
     setTimeout(() => r.remove(), 260);
     try { chrome.storage.local.set({ [KEY]: true }); } catch (e) { /* без памяти — покажется ещё раз */ }
@@ -341,5 +355,5 @@ const Tour = (() => {
     setTimeout(start, delay);                                       // дать панели отрисоваться (мозг собирается)
   }
 
-  return { init(d) { home = d && d.home; }, start, maybeStart, finish, STEPS, layoutLinks, BEND };
+  return { init(d) { home = d && d.home; }, start, maybeStart, finish, STEPS, layoutLinks, BEND, memoRoutes };
 })();
