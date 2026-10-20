@@ -100,7 +100,9 @@ const R_SIDE = [
   { re: /\b(?:setTimeout|setInterval|requestAnimationFrame|queueMicrotask)\s*\(/, why: 'планировщик' },
   { re: /\bdocument\s*\.\s*(?:write|execCommand|createElement|writeln)\b/, why: 'запись в document' },
   { re: /\bwindow\s*\.\s*open\s*\(/, why: 'window.open' },
-  { re: /(?:^|[^\w$])(?:location|top|parent|opener)\s*=(?!=)/, why: 'присваивание навигационного объекта' },
+  // Только сам глобальный объект, не свойство: el.style.top = … и node.parent = … — обычная запись в DOM,
+  // а не навигация (ложное срабатывание, как раньше с str.replace() и Object.assign()).
+  { re: /(?:^|[^\w$.])(?:location|top|parent|opener)\s*=(?!=)/, why: 'присваивание навигационного объекта' },
   // Навигация — только через location (и присваивание href). Раньше ловили любой .replace(/.assign(:
   // живой прогон 2048 — str.replace() и Object.assign() отклонялись как «метод навигации», модель ушла кликать.
   { re: SKRIPT_LOCATION_RE, why: 'обращение к location (можно только читать location.href/pathname/search/hash/host/origin)' },
@@ -124,7 +126,8 @@ const R_RUN = [
   { re: /\bsetTimeout\s*\(|\bsetInterval\s*\(|\brequestAnimationFrame\s*\(|\bqueueMicrotask\s*\(/, why: 'свой планировщик (раннер управляет циклом)' },
   { re: /\bwindow\s*\.\s*open\s*\(/, why: 'window.open' },
   { re: /\bdocument\s*\.\s*write\b/, why: 'document.write' },
-  { re: /(?:^|[^\w$])(?:location|top|parent|opener)\s*=(?!=)/, why: 'самостоятельная навигация' },
+  // Только сам глобальный объект, не свойство: el.style.top = … — запись в DOM, а не навигация.
+  { re: /(?:^|[^\w$.])(?:location|top|parent|opener)\s*=(?!=)/, why: 'самостоятельная навигация' },
   // Навигация — только через location (и присваивание href). Раньше ловили любой .replace(/.assign(:
   // живой прогон 2048 — str.replace() и Object.assign() отклонялись как «метод навигации», модель ушла кликать.
   { re: SKRIPT_LOCATION_RE, why: 'обращение к location (можно только читать location.href/pathname/search/hash/host/origin)' },

@@ -103,6 +103,18 @@ bad('chrome.runtime.sendMessage({})', 'run');
 bad('indexedDB.open("db")', 'run');
 bad('navigator.sendBeacon("/x")', 'run');
 
+// Свойство с именем top/parent — не навигация: el.style.top и node.parent пишутся в DOM.
+for (const pr of ['study', 'run']) {
+  ok('el.style.top = "10px"', pr);
+  ok('el.style.left = "1px"', pr);
+  ok('node.parent = wrap', pr);
+}
+for (const pr of ['readonly', 'run']) {   // в study навигационные правила не действуют (там только сеть/хранилища)
+  bad('top = "/x"', pr);
+  bad('parent = frame', pr);
+  bad('opener = win', pr);
+}
+
 // Навигация — только через location. Живой прогон 2048: str.replace() и Object.assign() отклонялись как «метод навигации».
 ok("const v = Number(t.className.replace(/\\D+/g, '')); v", 'run');
 ok("const s = Object.assign({}, a); s", 'run');
