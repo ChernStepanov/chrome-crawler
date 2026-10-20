@@ -52,6 +52,20 @@ async function main() {
  const { skill: v2b } = await S().save({ ...base({ title:'Новое имя' }), id: skill.id, code: v2.code });
  assert.equal(v2b.version,2, 'версия не растёт при смене заголовка');
  assert.equal(v2b.title,'Новое имя', 'заголовок обновился');
+ // метаданные без изменения кода: params/returns/risk/preconditions тоже переносятся
+ const { skill: v2c } = await S().save({ ...base({
+ title: 'Новое имя', description: 'новое', tags: ['a', 'b'],
+ params: { type: 'object', properties: { qty: { type: 'integer' } }, required: [] },
+ returns: 'число', risk: 'R0', preconditions: { selectors: ['#x'], globals: [] },
+ fingerprint: { selectors: [], globals: ['G'], canvas: false }, tests: [{ args: {}, expect: '1' }]
+ }), id: skill.id, code: v2.code });
+ assert.equal(v2c.version, 2, 'версия по-прежнему не растёт');
+ assert.deepEqual(JSON.parse(JSON.stringify(v2c.params.properties)), { qty: { type: 'integer' } }, 'params обновились');
+ assert.equal(v2c.returns, 'число', 'returns обновился');
+ assert.equal(v2c.risk, 'R0', 'risk обновился');
+ assert.deepEqual(JSON.parse(JSON.stringify(v2c.preconditions)), { selectors: ['#x'], globals: [] }, 'preconditions обновились');
+ assert.deepEqual(JSON.parse(JSON.stringify(v2c.fingerprint)), { selectors: [], globals: ['G'], canvas: false }, 'fingerprint обновился');
+ assert.equal(v2c.tests.length, 1, 'tests обновились');
 
  // ----3. Подмена кода в хранилище → get возвращает stale + warning ----
  const all = ctx.__data.skriptLibrary;

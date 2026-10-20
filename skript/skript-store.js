@@ -174,14 +174,26 @@ const SkriptStore = {
  let history = [];
  if (prev) {
  if (prev.hash === hash || (isNote && prev.description === skill.description)) {
- // код не менялся — обновляем только метаданные
+ // код не менялся — обновляем метаданные. Раньше, кроме заголовка/описания/тегов, ничего не переносилось:
+ // новые params/returns/risk/preconditions/scope при той же коде оставались старыми.
  Object.assign(prev, {
  title: skill.title, description: skill.description || prev.description,
- tags: skill.tags || prev.tags, enabled: skill.enabled !== false,
+ tags: (skill.tags || prev.tags || []).slice(0, 10).map(String),
+ enabled: skill.enabled !== false,
  stats: prev.stats
  });
+ if (skill.params) prev.params = skill.params;
+ if (skill.returns !== undefined) prev.returns = String(skill.returns).slice(0, 200);
+ if (skill.risk && ['R0', 'R1', 'R2'].includes(skill.risk)) prev.risk = skill.risk;
+ if (skill.kind !== 'note' && skill.scope && skill.scope.origin) {
+ prev.scope = { origin: skill.scope.origin, pathPrefix: skill.scope.pathPrefix || '', frame: skill.scope.frame || '' };
+ }
+ if (skill.preconditions) prev.preconditions = skill.preconditions;
+ if (skill.fingerprint) prev.fingerprint = skill.fingerprint;
+ if (Array.isArray(skill.tests)) prev.tests = skill.tests.slice(0, 5);
+ if (skill.author) prev.author = skill.author;
  await this._writeAll(all);
- return { skill: prev, warning };
+ return { skill: { ...prev }, warning };
  }
  version = (prev.version ||1) +1;
  history = [{ version: prev.version ||1, code: prev.code, hash: prev.hash, note: prev.description, ts: now }, ...(prev.history || [])].slice(0, SKRIPT_HISTORY_LIMIT);
