@@ -1703,6 +1703,10 @@ async function capture(st, snap) {
   try {
     await hideSuck(st.tabId);
     await chrome.tabs.update(st.tabId, { active: true });
+    // Новая вкладка могла открыться в другом окне (popup/window.open): captureVisibleTab должен
+    // смотреть в окно самой вкладки, а не в то, где задача начиналась.
+    const tab = await chrome.tabs.get(st.tabId).catch(() => null);
+    if (tab && tab.windowId != null) st.windowId = tab.windowId;
     const dataUrl = await chrome.tabs.captureVisibleTab(st.windowId, { format: 'jpeg', quality: 70 });
     const bmp = await createImageBitmap(await (await fetch(dataUrl)).blob());
     // Приводим скриншот к размеру viewport в CSS px: координаты на картинке == координаты на странице
@@ -2390,6 +2394,8 @@ async function runTask() {
       if (st.pendingTab) {
         st.tabId = st.pendingTab;
         st.pendingTab = null;
+        const t = await chrome.tabs.get(st.tabId).catch(() => null);
+        if (t && t.windowId != null) st.windowId = t.windowId;   // popup мог открыться в другом окне
         log('info', 'Переключился на новую вкладку');
         await waitLoaded(st.tabId);
       }
