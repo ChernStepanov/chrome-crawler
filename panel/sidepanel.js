@@ -325,13 +325,6 @@ function rgbToHsl(r, g, b) {
   const h = max === r ? ((g - b) / d + (g < b ? 6 : 0)) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return { h: h * 60, s, l };
 }
-function parseCssColor(str) {
-  if (!str) return null;
-  const ctx = document.createElement('canvas').getContext('2d');
-  ctx.fillStyle = '#000'; ctx.fillStyle = str; ctx.fillRect(0, 0, 1, 1);
-  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-  return rgbToHsl(r, g, b);
-}
 // ---- цветовая математика ----
 function hslToRgb(h, s, l) {
   h = (((h % 360) + 360) % 360) / 360;
@@ -1248,12 +1241,13 @@ async function loadSettings() {
   fillProviderSelect();
   applyProviderUI();
   segSet('toolModeSeg', ['auto', 'native', 'json'].includes(raw.toolMode) ? raw.toolMode : 'auto');
-  segSet('compactSeg', raw.compact);
+  // Старое значение было булевым (вкл/выкл) — переводим в сегменты, иначе ни одна кнопка не выбрана.
+  segSet('compactSeg', raw.compact === true ? 'on' : raw.compact === false ? 'off' : ['auto', 'on', 'off'].includes(raw.compact) ? raw.compact : 'auto');
   segSet('observeSeg', ['structure', 'image', 'both'].includes(raw.observeMode) ? raw.observeMode :
     raw.shotMode === 'never' ? 'structure' : 'both');
   segSet('riskSeg', raw.riskMode === 'accept' ? 'accept' : 'ask');
   lastRisk = raw.riskMode === 'accept' ? 'accept' : 'ask';
-  segSet('themeSeg', raw.theme);
+  segSet('themeSeg', ['auto', 'light', 'dark'].includes(raw.theme) ? raw.theme : 'auto');
   $('maxSteps').value = raw.maxSteps;
   // миграция: раньше «Авто» был одним из кружков акцента
   const auto = raw.autoPalette === null ? raw.accent === 'auto' : !!raw.autoPalette;
