@@ -96,6 +96,21 @@ const SelfUpdate = (() => {
     await w.close();
   }
 
+  // Удаление файла по относительному пути. Нет файла или папки — false (обновление не должно падать из-за чистки).
+  async function removeFile(root, path) {
+    const parts = String(path).split('/');
+    let dir = root;
+    try { for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p); } catch (e) { return false; }
+    try { await dir.removeEntry(parts[parts.length - 1]); return true; } catch (e) { return false; }
+  }
+
+  // Список файлов, записанных прошлым обновлением: по нему чистим то, чего нет в новой версии.
+  // Хранится в IndexedDB рядом с handle папки; подменяемо в тестах (SelfUpdate._files).
+  const fileList = {
+    async load() { try { return await idb('readonly', (s) => s.get('files')); } catch (e) { return null; } },
+    async save(list) { try { await idb('readwrite', (s) => s.put(list, 'files')); } catch (e) { /* без памяти просто не чистим */ } }
+  };
+
   // Получить папку: сохранённую (с разрешением на запись) или выбрать заново. Вызывать по нажатию кнопки.
   async function folder(running) {
     let dir = await loadHandle();
@@ -128,9 +143,22 @@ const SelfUpdate = (() => {
     // manifest.json — последним: если запись оборвётся, папка останется «старой версии» по манифесту
     const order = [...files.keys()].sort((a, b) => (a === 'manifest.json') - (b === 'manifest.json'));
     for (const path of order) await writeFile(target, path, files.get(path));
-    return files.size;
+    // Файлы прошлой версии, которых нет в новой (переименованные/удалённые модули), иначе остаются мусором.
+    // Чистим только то, что записывало само обновление: пользовательские файлы в список не попадают.
+    const store = SelfUpdate._files || fileList;
+    const previous = await store.load();
+    let removed = 0;
+    if (Array.isArray(previous)) {
+      const stale = previous.filter((p) => typeof p === 'string' && p && !files.has(p));
+      if (stale.length) {
+        onStep(`Удаляю ${stale.length} устаревших файлов…`);
+        for (const path of stale) if (await removeFile(target, path)) removed++;
+      }
+    }
+    await store.save([...files.keys()]);
+    return { files: files.size, removed };
   }
 
-  return { update, unzip, stripRoot, checkFolder, writeFile };
+  return { update, unzip, stripRoot, checkFolder, writeFile, removeFile, _files: null };
 })();
 if (typeof module !== 'undefined') module.exports = SelfUpdate;

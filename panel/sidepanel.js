@@ -2686,8 +2686,8 @@ async function checkUpdates(force = false) {
     if (running) { status('Дождитесь конца задачи или остановите её.', true); return; }
     $('ucUpdate').disabled = true;
     try {
-      const n = await SelfUpdate.update(u, chrome.runtime.getManifest(), { onStep: (t) => status(t) });
-      status(`Готово: ${n} файлов, версия ${u.version}. Перезапускаю…`);
+      const res = await SelfUpdate.update(u, chrome.runtime.getManifest(), { onStep: (t) => status(t) });
+      status(`Готово: ${res.files} файлов${res.removed ? `, удалено ${res.removed}` : ''}, версия ${u.version}. Перезапускаю…`);
       setTimeout(() => chrome.runtime.reload(), 700);
     } catch (e) {
       status(e.name === 'AbortError' ? 'Папка не выбрана.' : e.message, true);   // отмена выбора папки — AbortError

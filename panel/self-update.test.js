@@ -40,7 +40,7 @@ function makeZip(entries) {
 
 // Папка в памяти с API File System Access (то, что использует self-update.js)
 function memDir(files = {}, dirs = []) {
-  const writes = [];
+  const writes = [], removed = [];
   const mk = (prefix) => ({
     async getDirectoryHandle(n, o = {}) {
       const p = prefix + n + '/';
@@ -55,9 +55,15 @@ function memDir(files = {}, dirs = []) {
         getFile: async () => ({ text: async () => (typeof files[p] === 'string' ? files[p] : dec.decode(files[p])) }),
         createWritable: async () => ({ write: async (d) => { files[p] = d; writes.push(p); }, close: async () => {} })
       };
+    },
+    async removeEntry(n) {
+      const p = prefix + n;
+      if (!(p in files)) throw new Error('NotFound');
+      delete files[p];
+      removed.push(p);
     }
   });
-  return { root: mk(''), files, writes };
+  return { root: mk(''), files, writes, removed };
 }
 
 const running = { name: 'Chrome crawler', version: '0.7.1', homepage_url: 'https://github.com/ir00nman/chrome-crawler' };
@@ -92,13 +98,30 @@ const manifest = (v) => JSON.stringify({ name: 'Chrome crawler', version: v, hom
     const d = memDir({ 'manifest.json': manifest('0.7.1'), 'panel/sidepanel.js': 'старое' });
     const steps = [];
     const fetch = async (url) => { assert.equal(url, 'https://codeload.github.com/ir00nman/chrome-crawler/zip/refs/heads/main'); return { ok: true, arrayBuffer: async () => zip.buffer }; };
-    const n = await S.update({ zipUrl: 'https://codeload.github.com/ir00nman/chrome-crawler/zip/refs/heads/main', version: '0.7.2' }, running, { fetch, dir: d.root, onStep: (s) => steps.push(s) });
-    assert.equal(n, 3);
+    const res = await S.update({ zipUrl: 'https://codeload.github.com/ir00nman/chrome-crawler/zip/refs/heads/main', version: '0.7.2' }, running, { fetch, dir: d.root, onStep: (s) => steps.push(s) });
+    assert.equal(res.files, 3);
+    assert.equal(res.removed, 0, 'чистить нечего: списка прошлой версии нет');
     assert.equal(d.writes[d.writes.length - 1], 'manifest.json', 'манифест записан последним');
     assert.match(dec.decode(d.files['panel/sidepanel.js']), /новая панель/);
     assert.match(dec.decode(d.files['manifest.json']), /0\.7\.2/);
     assert.deepEqual(steps, ['Скачиваю…', 'Распаковываю…', 'Записываю 3 файлов…']);
   }
+  // ---- 3б. Файлы прошлой версии, которых нет в новой, удаляются; пользовательские — нет ----
+  {
+    const d = memDir({ 'manifest.json': manifest('0.7.1'), 'panel/old.js': 'старое', 'panel/sidepanel.js': 'старое' });
+    let saved = ['panel/old.js', 'panel/sidepanel.js', 'manifest.json'];
+    S._files = { load: async () => saved, save: async (l) => { saved = l; } };
+    const steps = [];
+    const res = await S.update({ zipUrl: 'z', version: '0.7.2' }, running, { fetch: async () => ({ ok: true, arrayBuffer: async () => zip.buffer }), dir: d.root, onStep: (s) => steps.push(s) });
+    assert.equal(res.files, 3);
+    assert.equal(res.removed, 1, 'удалён один устаревший файл');
+    assert.ok(!('panel/old.js' in d.files), 'panel/old.js удалён');
+    assert.ok('panel/sidepanel.js' in d.files, 'актуальные файлы на месте');
+    assert.deepEqual(JSON.parse(JSON.stringify(saved)).sort(), ['README.md', 'manifest.json', 'panel/sidepanel.js'], 'список файлов обновлён');
+    assert.ok(steps.some((x) => /Удаляю 1 устаревших/.test(x)), 'шаг удаления показан');
+    S._files = null;
+  }
+
   // в архиве не та версия (GitHub ещё не обновил архив) — ничего не пишем
   {
     const d = memDir({ 'manifest.json': manifest('0.7.1') });
