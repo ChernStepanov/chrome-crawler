@@ -109,7 +109,10 @@ function skriptPageSide(NONCE, L, DRY, ARGS, USER, GRID) {
       const fps = Math.min(120, Math.max(1, Number(opt && opt.fps) || 30));
       const iv = 1000 / fps;
       let on = true, handle = 0, frames = 0, t0 = NOW();
-      const cancel = () => { on = false; CT(handle); S.timers.delete(handle); S.loops.delete(cancel); maybeFinish(); };
+      // Таймер цикла живёт в замыкании и снимается через cancel(); в S.timers его не кладём:
+      // иначе каждый тик добавлял бы новый id и за долгий запуск Set разрастался бы до десятков тысяч.
+      // stopAll() сначала отменяет все циклы (S.loops), поэтому их таймеры всё равно снимаются.
+      const cancel = () => { on = false; CT(handle); S.loops.delete(cancel); maybeFinish(); };
       const tick = async () => {
         if (!on || S.stopped) return;
         const t = NOW();
@@ -123,11 +126,9 @@ function skriptPageSide(NONCE, L, DRY, ARGS, USER, GRID) {
         if (now - t0 >= 500) { send({ t: 'fps', fps: Math.round(frames * 1000 / (now - t0)) }); frames = 0; t0 = now; }
         if (!on || S.stopped) return;
         handle = ST(tick, Math.max(0, iv - (NOW() - t)));
-        S.timers.add(handle);
       };
       S.loops.add(cancel);
       handle = ST(tick, 0);
-      S.timers.add(handle);
       return cancel;
     },
     key(name, opt) {
@@ -205,6 +206,9 @@ function skriptPageSide(NONCE, L, DRY, ARGS, USER, GRID) {
   Object.freeze(api);
 
   globalThis.__crawlerStop = () => { S.finished = true; stopAll(); };
+  // Диагностика для тестов (включается только флагом limits.debug): размеры внутренних наборов.
+  // Нужна, чтобы ловить утечки вроде «каждый тик цикла оставляет id таймера в S.timers».
+  if (L.debug) globalThis.__crawlerDebug = () => ({ timers: S.timers.size, loops: S.loops.size, waiters: S.waiters.size });
   // Ответ панели на pixels(): RGBA в base64. Без nonce запуска чужой код страницы подсунуть картинку не может.
   globalThis.__crawlerPix = (n, id, out) => {
     if (n !== NONCE) return;

@@ -127,6 +127,21 @@ function makePage(opt = {}) {
     assert.equal((await runner.stop('manual')).stopped, false, 'повторный стоп безвреден');
   }
 
+  // ---- 3б. Таймеры цикла не копятся: каждый тик не оставляет id в S.timers ----
+  {
+    const { runner, G } = makePage({ limits: { debug: true } });
+    const p = runner.run({ approved: true, permissions: ['read'], code: 'return void __crawler.loop(() => {}, { fps: 100 });' });
+    await sleep(300);
+    const d = G('__crawlerDebug()');
+    assert.ok(d.timers <= 4, 'в S.timers только служебные таймеры (2) и ничего от тиков: ' + d.timers);
+    assert.equal(d.loops, 1);
+    await runner.stop('manual');
+    assert.equal((await p).reason, 'manual');
+    const after = G('__crawlerDebug()');
+    assert.equal(after.loops, 0, 'после стопа циклов нет');
+    assert.ok(after.timers <= 2, 'после стопа таймеры цикла сняты: ' + after.timers);
+  }
+
   // ---- 4. Лимит ввода ----
   {
     const { runner, input } = makePage({ limits: { actionsPerSecond: 5 } });
