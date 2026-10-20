@@ -17,6 +17,8 @@
   const CLICKABLE = 'a,button,input,select,textarea,summary,[role=button],[role=link],[onclick]';
 
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  // Лимит выборки: всегда 1..100. Отрицательный limit раньше попадал в slice(0, -N) и возвращал почти всё.
+  const clampLimit = (v, d = 30) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? Math.max(1, Math.min(100, n)) : d; };
 
   function isVisible(el) {
     const r = el.getBoundingClientRect();
@@ -365,7 +367,8 @@
   function extractFrom(root, selector, limit, attrs) {
     let nodes;
     try { nodes = [...root.querySelectorAll(selector)]; } catch (e) { return { ok: false, error: 'Bad selector: ' + e.message }; }
-    const items = nodes.slice(0, limit).map((n, i) => {
+    const max = clampLimit(limit, 30);
+    const items = nodes.slice(0, max).map((n, i) => {
       const a = n.matches('a[href]') ? n : (n.querySelector('a[href]') || n.closest('a[href]'));
       const o = { i: i + 1, text: clean(n.innerText ?? n.textContent).slice(0, 300) };
       if (a) o.href = a.getAttribute('href');
@@ -412,7 +415,7 @@
     if (ct.includes('html')) {
       const doc = new DOMParser().parseFromString(body, 'text/html');
       // extract_items по загруженной странице: тот же разбор, что и для открытой вкладки (extract-items.js)
-      if (format === 'items' && window.__crawlerExtract) { Object.assign(out, window.__crawlerExtract.items(doc, r.url || u.href, limit)); return out; }
+      if (format === 'items' && window.__crawlerExtract) { Object.assign(out, window.__crawlerExtract.items(doc, r.url || u.href, clampLimit(limit, 30))); return out; }
       if (selector) { Object.assign(out, extractFrom(doc, selector, limit, attrs)); return out; }
       doc.querySelectorAll('script,style,noscript,svg,template').forEach((e) => e.remove());
       if (format === 'links') {
@@ -430,7 +433,7 @@
   // Список товаров/объявлений открытой страницы (extract-items.js загружается перед этим файлом)
   function items(limit = 40) {
     if (!window.__crawlerExtract) return { method: 'none', total: 0, items: [], error: 'extractor not loaded' };
-    return window.__crawlerExtract.items(document, location.href, limit);
+    return window.__crawlerExtract.items(document, location.href, clampLimit(limit, 40));
   }
 
   // Ждём, пока DOM «затихнет» (вместо фиксированных пауз)

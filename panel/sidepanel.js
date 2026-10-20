@@ -2108,7 +2108,7 @@ async function executeTool(name, args, st, s) {
     }
 
     case 'query_dom': {
-      const r = await page(tab, 'queryDom', [args.selector, Math.min(100, args.limit || 30), args.attrs || []]);
+      const r = await page(tab, 'queryDom', [args.selector, Math.max(1, Math.min(100, Number(args.limit) || 30)), args.attrs || []]);
       if (!r.ok) return fail(r.error);
       if (!r.total) return { text: 'No matches. Try dom_hints to discover selectors.' };
       return { text: clip(JSON.stringify(r), 7000) };
@@ -2123,7 +2123,7 @@ async function executeTool(name, args, st, s) {
       const wait = 800 - (Date.now() - st.lastFetchAt);
       if (wait > 0) await sleep(wait); // вежливый темп, чтобы не словить антибот
       st.lastFetchAt = Date.now();
-      const r = await page(tab, 'fetchSame', [args.url, args.selector || null, Math.min(100, args.limit || 30), args.attrs || [], args.format || 'text', 6000]);
+      const r = await page(tab, 'fetchSame', [args.url, args.selector || null, Math.max(1, Math.min(100, Number(args.limit) || 30)), args.attrs || [], args.format || 'text', 6000]);
       const out = { text: clip(JSON.stringify(r), 7000) };
       if (!r.ok) out.error = true;
       return out;
