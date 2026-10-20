@@ -152,6 +152,10 @@ let cancelAsk = null;
 const DENIED = { text: 'User DENIED this action. Do not retry it; choose another approach or finish.', denied: true };
 const fail = (text) => ({ text, error: true });
 
+// Общая очередь «прочитать → изменить → записать» для ratings/notes/skills: параллельные операции
+// иначе затирают друг друга (см. panel/storage-queue.js).
+const storageUpdate = StorageQueue.create();
+
 // ---------- Настройки и провайдеры ----------
 let profiles = {};          // { providerId: { baseUrl, apiKey, model } }
 let currentProvider = 'clodex';
@@ -827,12 +831,14 @@ function ratingReport(r) {
   return [`# Отзыв: ${r.verdict === 'good' ? 'хорошо' : 'плохо'}`, `Когда: ${when}`, `Задача: ${r.task}`, `Страница: ${r.url}`, `Модель: ${r.model}`,
     r.comment ? `Что не так: ${r.comment}` : '', '', '## Ответ', r.answer, '', '## Ход решения', r.steps].filter((x) => x !== '').join('\n');
 }
-async function saveRating(r) {
-  const { ratings = [] } = await chrome.storage.local.get({ ratings: [] });
-  const i = ratings.findIndex((x) => x.id === r.id);
-  if (i >= 0) ratings[i] = r; else ratings.push(r);
-  await chrome.storage.local.set({ ratings: ratings.slice(-RATINGS_MAX) });
-  updateRatingsButton();
+function saveRating(r) {
+  return storageUpdate(async () => {
+    const { ratings = [] } = await chrome.storage.local.get({ ratings: [] });
+    const i = ratings.findIndex((x) => x.id === r.id);
+    if (i >= 0) ratings[i] = r; else ratings.push(r);
+    await chrome.storage.local.set({ ratings: ratings.slice(-RATINGS_MAX) });
+    updateRatingsButton();
+  });
 }
 function addRating(card, answer) {
   const r = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: Date.now(), verdict: '', comment: '',
@@ -1064,13 +1070,13 @@ async function renderNotes() {
       const btn = document.createElement('button');
       btn.setAttribute('aria-label', 'Удалить');
       btn.innerHTML = '<svg class="ic"><use href="#i-x"/></svg>';
-      btn.onclick = async () => {
+      btn.onclick = () => storageUpdate(async () => {
         const cur = (await chrome.storage.local.get({ notes: {} })).notes;
         cur[host] = (cur[host] || []).filter((_, j) => j !== i);
         if (!cur[host].length) delete cur[host];
         await chrome.storage.local.set({ notes: cur });
         renderNotes();
-      };
+      });
       row.append(sp, btn);
       card.appendChild(row);
     });
@@ -1277,12 +1283,14 @@ async function getNotes(host) {
   const { notes } = await chrome.storage.local.get({ notes: {} });
   return notes[host] || [];
 }
-async function addNote(host, text) {
-  const { notes } = await chrome.storage.local.get({ notes: {} });
-  const list = notes[host] || [];
-  list.push(clip(text.trim(), 400));
-  notes[host] = list.slice(-20);
-  await chrome.storage.local.set({ notes });
+function addNote(host, text) {
+  return storageUpdate(async () => {
+    const { notes } = await chrome.storage.local.get({ notes: {} });
+    const list = notes[host] || [];
+    list.push(clip(text.trim(), 400));
+    notes[host] = list.slice(-20);
+    await chrome.storage.local.set({ notes });
+  });
 }
 
 // Скилы — одобренные пользователем инструкции, отдельно от автоматических заметок.
@@ -1394,22 +1402,22 @@ async function renderSkills() {
       const actions = document.createElement('div');
       actions.className = 'skill-actions';
       const button = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = label; b.onclick = fn; actions.appendChild(b); };
-      button(skill.enabled === false ? 'Включить' : 'Отключить', async () => {
+      button(skill.enabled === false ? 'Включить' : 'Отключить', () => storageUpdate(async () => {
         const data = (await chrome.storage.local.get({ skills: {} })).skills;
         const item = data[host]?.find((s) => s.id === skill.id);
         if (!item) return;
         item.enabled = item.enabled === false;
         await chrome.storage.local.set({ skills: data });
         renderSkills();
-      });
+      }));
       button('Изменить', () => editSkill({ ...skill, host }));
-      button('Удалить', async () => {
+      button('Удалить', () => storageUpdate(async () => {
         const data = (await chrome.storage.local.get({ skills: {} })).skills;
         data[host] = (data[host] || []).filter((s) => s.id !== skill.id);
         if (!data[host].length) delete data[host];
         await chrome.storage.local.set({ skills: data });
         renderSkills();
-      });
+      }));
       card.append(title, source, text, actions);
       root.appendChild(card);
     });
@@ -1444,18 +1452,24 @@ async function saveSkill() {
     $('skillError').textContent = 'Проверьте домен, путь (начинается с /), название и текст.';
     return;
   }
-  const { skills = {} } = await chrome.storage.local.get({ skills: {} });
-  const list = Array.isArray(skills[host]) ? skills[host] : [];
-  if (!skillEditing?.id && list.length >= SKILL_LIMIT) { $('skillError').textContent = 'Не больше 20 скилов для одного сайта.'; return; }
   const item = { id: skillEditing?.id || crypto.randomUUID(), title: clip(title, 80), path: clip(path, 150),
     text: clip(text, 3000), source: skillEditing?.source || 'manual', enabled: skillEditing?.enabled !== false,
     updated: new Date().toISOString().slice(0, 10) };
-  const i = list.findIndex((s) => s.id === item.id);
-  if (skillEditing?.id && i < 0) { $('skillError').textContent = 'Скил больше не существует. Обновите список.'; return; }
-  if (i < 0) list.push(item); else list[i] = item;
-  skills[host] = list;
-  try { await chrome.storage.local.set({ skills }); }
-  catch (e) { $('skillError').textContent = 'Не удалось сохранить: ' + e.message; return; }
+  let saved = false;
+  try {
+    await storageUpdate(async () => {
+      const { skills = {} } = await chrome.storage.local.get({ skills: {} });
+      const list = Array.isArray(skills[host]) ? skills[host] : [];
+      if (!skillEditing?.id && list.length >= SKILL_LIMIT) throw new Error('Не больше 20 скилов для одного сайта.');
+      const i = list.findIndex((s) => s.id === item.id);
+      if (skillEditing?.id && i < 0) throw new Error('Скил больше не существует. Обновите список.');
+      if (i < 0) list.push(item); else list[i] = item;
+      skills[host] = list;
+      await chrome.storage.local.set({ skills });
+      saved = true;
+    });
+  } catch (e) { $('skillError').textContent = (e && e.message) || 'Не удалось сохранить'; return; }
+  if (!saved) return;
   closeSheet('skillEditor');
   skillEditing = null;
   if (skillReturnSheet) renderSkills();
