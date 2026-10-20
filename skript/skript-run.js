@@ -219,6 +219,7 @@ const SkriptRun = (() => {
     const item = { title: d.title, description: d.description, code: d.code, permissions: d.permissions.slice(), origin, goal: d.goal,
       savedId: d.savedId || null, version: d.version, changed: !!d.savedId && d.code !== d.adoptedCode };
     deps.onScript?.(true);                                           // скрипт работает — панель убирает щупальца со страницы
+    const release = () => { if (signal) signal.removeEventListener('abort', onAbort); };
     const runP = run.run({ code: d.code, args: args || {}, approved: true, permissions: perms, expectedOrigin: origin, savedKeys: savedKeys() });
     // кнопки «Работает» / «Не работает» — когда показал себя; ответ человека или конец скрипта — что раньше
     const t0 = Date.now();
@@ -229,10 +230,21 @@ const SkriptRun = (() => {
         if (Date.now() - t0 >= VERDICT_MS && run.actions > 0) { clearInterval(timer); removeAsk = c.verdict(() => resolve('yes'), () => resolve('no')); }
       }, 250);
     });
-    const first = await Promise.race([runP.then((s) => ({ s })), answer.then((a) => ({ a }))]);
+    let first;
+    try {
+      first = await Promise.race([runP.then((s) => ({ s })), answer.then((a) => ({ a }))]);
+    } catch (e) {
+      // Раннер отказал ещё до запуска (например, «Скрипт уже запущен»): не оставляем живой интервал,
+      // карточку в ожидании кнопок «Работает/Не работает» и флаг «скрипт работает».
+      clearInterval(timer);
+      removeAsk();
+      release();
+      reader.stop().catch(() => {});
+      deps.onScript?.(false);
+      throw e;
+    }
     clearInterval(timer);
     removeAsk();
-    const release = () => { if (signal) signal.removeEventListener('abort', onAbort); };
 
     if (first.a === 'yes') {
       // задача заканчивается, скрипт — нет: доигрывает сам, карточка у поля ввода управляет им
