@@ -158,6 +158,16 @@
     start('cards');
     {
       const sig = (el) => `${el.tagName}.${String(el.getAttribute('class') || '').trim().split(/\s+/)[0] || ''}`;
+      const sigCounts = new Map();   // parent → Map(подпись → сколько братьев): считаем один раз на родителя
+      const twinsOf = (parent, node) => {
+        let counts = sigCounts.get(parent);
+        if (!counts) {
+          counts = new Map();
+          for (const c of parent.children) { const k = sig(c); counts.set(k, (counts.get(k) || 0) + 1); }
+          sigCounts.set(parent, counts);
+        }
+        return counts.get(sig(node)) || 0;
+      };
       const cards = new Set();
       let scanned = 0;
       for (const el of doc.querySelectorAll('body *')) {
@@ -166,8 +176,7 @@
         let node = el;
         for (let up = 0; up < 9 && node && node.parentElement; up++, node = node.parentElement) {
           const parent = node.parentElement;
-          const twins = [...parent.children].filter((c) => sig(c) === sig(node));
-          if (twins.length >= 3 && node.querySelector('a[href]')) { cards.add(node); break; }
+          if (twinsOf(parent, node) >= 3 && node.querySelector('a[href]')) { cards.add(node); break; }
         }
       }
       for (const card of cards) {
