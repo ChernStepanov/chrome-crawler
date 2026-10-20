@@ -2326,8 +2326,13 @@ async function runTask() {
     mode: cfg.toolMode === 'json' ? 'json' : 'native',
     compact,
     skript: skript ? { host, pageUrl: taskUrl } : null,
-    tools: (skript ? [...SkriptMode.tools(TOOLS), ...SkriptRun.tools(), ...(study ? SkriptStudy.tools() : [])] : TOOLS).filter((t) => (cfg.observeMode !== 'image' || imageTools.has(t.function.name) || skriptOwn.has(t.function.name)) &&
-      (!compact || COMPACT_TOOLS.has(t.function.name)))
+    tools: (skript ? [...SkriptMode.tools(TOOLS), ...SkriptRun.tools(), ...(study ? SkriptStudy.tools() : [])] : TOOLS).filter((t) => {
+      const name = t.function.name;
+      const visible = cfg.observeMode !== 'image' || imageTools.has(name) || skriptOwn.has(name);
+      // Компактный режим урезает набор базовых инструментов, но инструменты /skript и /study
+      // нужны целиком: иначе локальная модель не сможет написать и запустить скрипт.
+      return visible && (!compact || COMPACT_TOOLS.has(name) || skriptOwn.has(name));
+    })
   };
   // Встроенные навыки сайта (SkriptBuiltin): подсказка в промпт и проверенные инструменты расширения.
   // До try: падение здесь оставило бы панель в «работаю» навсегда (finally не выполнится) — поэтому мягко.
