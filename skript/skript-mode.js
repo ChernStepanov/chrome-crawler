@@ -106,9 +106,15 @@ function skriptGate(action) {
   const args = action.args || {};
 
   if (name === 'navigate' && args.url && skriptState.grants && skriptState.grants.nav === 'same-origin') {
-    let target = null;
-    try { target = new URL(String(args.url), action.pageUrl || (host ? 'https://' + host : undefined)); } catch (e) {}
-    if (!target || target.hostname !== host) {
+    // Сравниваем origin (схема + хост + порт), а не только hostname: иначе грант «в пределах сайта»
+    // разрешал бы https://shop.com → http://shop.com или другой порт.
+    let target = null, base = null;
+    try {
+      const rawBase = action.pageUrl || (host ? 'https://' + host : '');
+      base = rawBase ? new URL(rawBase) : null;
+      target = base ? new URL(String(args.url), base) : null;
+    } catch (e) { /* ниже — отказ */ }
+    if (!target || !base || target.origin !== base.origin) {
       return { denied: true, cls: 'R1', text: 'Blocked: navigation is limited to the current site (access grant). Choose another approach or finish.' };
     }
   }
