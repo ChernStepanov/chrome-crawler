@@ -14,35 +14,91 @@
  * `rect.top + 1` и `el.style.top` (навигация?).
  */
 
-// Вырезаем строковые/шаблонные литералы и комментарии, оставляя код.
+// Вырезаем строковые/шаблонные литералы, регулярные выражения и комментарии, оставляя код.
+// В шаблонных строках выражения ${…} — это код: их разбираем рекурсивно, иначе `fetch(...)`
+// внутри ${} проходил бы мимо правил. Регулярные выражения распознаём по предыдущему токену,
+// чтобы кавычка внутри /["']/ не начинала «строку».
 function skriptStrip(src) {
   let out = '';
   let i = 0;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
-    if (c === '/' && n === '*') {
-      i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
-      i += 2;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === '`') {
-      const q = c;
-      out += '""';
+  const st = { last: '' };
+  const ID = /[A-Za-z_$]/;
+  const ID_PART = /[\w$]/;
+  const REGEX_AFTER_WORD = new Set(['return', 'case', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield', 'await', 'throw']);
+  const canStartRegex = (last) => {
+    if (!last) return true;
+    if (last.length > 1) return REGEX_AFTER_WORD.has(last);
+    return '([{,;:!&|?+-*%^~<=>}'.includes(last);
+  };
+  const skipString = (q) => {
+    i++;
+    while (i < src.length && src[i] !== q) {
+      if (src[i] === '\\') i++;
+      if (src[i] === '\n') break; // незакрытая строка — не наш случай, но зацикливаться нельзя
       i++;
-      while (i < src.length && src[i] !== q) {
-        if (src[i] === '\\') i++;
-        if (src[i] === '\n') break; // незакрытая строка — не наш случай, но зацикливаться нельзя
-        i++;
+    }
+    if (i < src.length) i++;
+  };
+  const skipRegex = () => {
+    i++;
+    let cls = false;
+    while (i < src.length) {
+      const c = src[i];
+      if (c === '\\') { i += 2; continue; }
+      if (c === '[') cls = true;
+      else if (c === ']') cls = false;
+      else if (c === '/' && !cls) { i++; break; }
+      else if (c === '\n') break;
+      i++;
+    }
+    while (i < src.length && /[a-z]/i.test(src[i])) i++;   // флаги
+  };
+  const stripTemplate = () => {
+    i++;
+    out += '""';
+    st.last = '"';
+    while (i < src.length) {
+      const c = src[i];
+      if (c === '\\') { i += 2; continue; }
+      if (c === '`') { i++; return; }
+      if (c === '$' && src[i + 1] === '{') {
+        out += '${';
+        i += 2;
+        let depth = 1;
+        while (i < src.length) {
+          const d = src[i];
+          if (d === '}' && depth === 1) { out += '}'; i++; break; }
+          if (d === '{') depth++;
+          else if (d === '}') depth--;
+          one();
+        }
+        continue;
       }
       i++;
-      continue;
+    }
+  };
+  function one() {
+    const c = src[i], n = src[i + 1];
+    if (c === '/' && n === '/') { while (i < src.length && src[i] !== '\n') i++; out += ' '; return; }
+    if (c === '/' && n === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; out += ' '; return; }
+    if (c === '"' || c === "'") { skipString(c); out += '""'; st.last = '"'; return; }
+    if (c === '`') { stripTemplate(); return; }
+    if (c === '/' && canStartRegex(st.last)) { skipRegex(); out += '""'; st.last = '"'; return; }
+    if ((c === '+' && n === '+') || (c === '-' && n === '-')) { out += c + n; st.last = c + n; i += 2; return; }
+    if (ID.test(c)) {
+      const s = i;
+      i++;
+      while (i < src.length && ID_PART.test(src[i])) i++;
+      const w = src.slice(s, i);
+      out += w;
+      st.last = w;
+      return;
     }
     out += c;
+    if (!/\s/.test(c)) st.last = c;
     i++;
   }
+  while (i < src.length) one();
   return out;
 }
 
@@ -69,10 +125,11 @@ const SKRIPT_LOCATION_RE = /\blocation\b(?!\s*\.\s*(?:href|pathname|search|hash|
 
 // Записи в хранилище, куки, сеть — запрещены везде, кроме инструментов агента.
 const R_NET = [
-  { re: /\bfetch\s*\(/, why: 'fetch' },
+  { re: /\bfetch\b/, why: 'fetch' },
   { re: /\bXMLHttpRequest\b/, why: 'XMLHttpRequest' },
   { re: /\bWebSocket\b/, why: 'WebSocket' },
   { re: /\bEventSource\b/, why: 'EventSource' },
+  { re: /\bimport\s*\(/, why: 'динамический import' },
   { re: /\bsendBeacon\b/, why: 'sendBeacon' },
   { re: /\bnavigator\s*\.\s*(?:sendBeacon|credentials|serviceWorker|cookieEnabled)\b/, why: 'navigator-доступ к сетевым/учётным данным' },
   { re: /\blocalStorage\b/, why: 'localStorage' },
@@ -83,9 +140,13 @@ const R_NET = [
   { re: /\bdocument\s*\.\s*cookie\b/, why: 'document.cookie' },
   { re: /\b(?:chrome|browser|extension|chromeRuntime)\s*\./, why: 'chrome-/browser- API расширения' },
   // Обходы по имени: строки вырезаются заранее, поэтому window["fetch"]() иначе проходит.
-  { re: /\b(?:window|globalThis|self|top|parent|frames)\s*\[/, why: 'доступ к глобальному объекту по ключу' },
+  { re: /\b(?:window|globalThis|self|top|parent|frames|this)\s*\[/, why: 'доступ к глобальному объекту по ключу' },
+  { re: /\breturn\s+(?:this|window|globalThis|self|top|parent|frames)\b/, why: 'возврат глобального объекта (обход запретов)' },
   { re: /\.\s*constructor\b|\[\s*""\s*\]\s*\(/, why: 'constructor/вызов по строковому ключу (обход запретов)' },
-  { re: /\]\s*\(/, why: 'вызов элемента по ключу или индексу' }
+  { re: /\]\s*\(/, why: 'вызов элемента по ключу или индексу' },
+  { re: /\bObject\s*\.\s*assign\s*\(\s*(?:window|globalThis|self|top|parent|document|location|history|navigator)\b/, why: 'запись в глобальный объект через Object.assign' },
+  { re: /\bReflect\s*\.\s*(?:apply|construct|set|defineProperty|deleteProperty|setPrototypeOf)\b/, why: 'Reflect-обход запретов' },
+  { re: /\bnew\s+(?:Image|Audio|Worker|SharedWorker|WebSocket|EventSource)\b/, why: 'загрузка ресурса/сети через конструктор' }
 ];
 
 // Побочные эффекты и потенциально опасные конструкции — для readonly.
