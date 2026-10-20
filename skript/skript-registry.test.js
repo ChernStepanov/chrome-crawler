@@ -30,6 +30,11 @@ async function main() {
  assert.deepEqual(m.map((s) => s.id).sort(), ['sk1','sk2'], 'match по origin+pathPrefix, отфильтрованы disabled/untrusted/чужой origin');
  assert.equal(R().match('https://shop.example/', skills).length,1, 'pathPrefix не подходит корню');
  assert.equal(R().match('not a url', skills).length,0, 'битый URL → пусто');
+ // pathPrefix — по границе сегмента пути
+ const edge = [ sk({ id:'ed', scope:{ origin:'https://shop.example', pathPrefix:'/editor' } }) ];
+ assert.deepEqual(R().match('https://shop.example/editor/1', edge).map((x) => x.id), ['ed'], '/editor/1 подходит');
+ assert.deepEqual(R().match('https://shop.example/editor', edge).map((x) => x.id), ['ed'], 'точный /editor подходит');
+ assert.equal(R().match('https://shop.example/editorial', edge).length, 0, '/editor не подходит к /editorial');
 
  // ----2. checkPreconditions: селекторы/глобалы через дешёвый eval ----
  const okDeps = { evalExpr: async (e) => JSON.stringify([true, true]) };

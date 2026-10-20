@@ -5,6 +5,9 @@
  * и превращает приёмы в инструменты skill__<id> для Исполнителя.
  */
 
+// Путь приёма — по границе сегмента: /editor не должен подходить к /editorial.
+const pathMatches = (prefix, pathname) => !prefix || pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : prefix + '/');
+
 const SkriptRegistry = {
  // Подходит ли приём под URL: origin, pathPrefix, enabled, не untrusted.
  match(url, skills) {
@@ -13,7 +16,7 @@ const SkriptRegistry = {
  const origin = u.origin;
  return (skills || []).filter((s) =>
  s.scope.origin === origin &&
- (!s.scope.pathPrefix || u.pathname.startsWith(s.scope.pathPrefix)) &&
+ pathMatches(s.scope.pathPrefix, u.pathname) &&
  s.enabled !== false &&
  s.status !== 'untrusted' &&
  s.status !== 'stale'
