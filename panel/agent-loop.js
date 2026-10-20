@@ -147,5 +147,47 @@ const AgentLoop = (() => {
     return out;
   }
 
-  return { wantShot, trimHistory, clickAtText, linkItems, listify, salvageList, SPARSE_TEXT, SPARSE_ELEMENTS };
+  // ---- Разбор «Команд в ответе» (JSON-протокол) ----
+  // Вынесено из sidepanel.js, чтобы можно было проверить набор инструментов: в /skript и /study
+  // разрешены не только базовые TOOLS, но и write_script/run_script/… и встроенные навыки.
+  function safeJson(s) { try { return JSON.parse(s || '{}'); } catch (e) { return {}; } }
+
+  // Достаём первый сбалансированный JSON-объект/массив из текста ответа.
+  function extractJsonBlock(text) {
+    if (!text) return null;
+    // «думающие» модели (qwen3, deepseek-r1) пишут рассуждения в <think>…</think>
+    let t = String(text).replace(/<think>[\s\S]*?<\/think>/gi, '');
+    if (t.includes('</think>')) t = t.slice(t.lastIndexOf('</think>') + 8);
+    t = t.trim().replace(/^```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+    const start = t.search(/[\[{]/);
+    if (start < 0) return null;
+    const open = t[start], close = open === '{' ? '}' : ']';
+    let depth = 0, inStr = false, esc = false, end = -1;
+    for (let i = start; i < t.length; i++) {
+      const c = t[i];
+      if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') { inStr = true; continue; }
+      if (c === open) depth++;
+      else if (c === close && --depth === 0) { end = i; break; }
+    }
+    if (end < 0) return null;
+    try { return JSON.parse(t.slice(start, end + 1)); } catch (e) { return null; }
+  }
+
+  // Приводим сбалансированный JSON к списку вызовов инструментов. tools — массив определений
+  // (function.name) или имён; всё, чего нет в наборе, отбрасываем.
+  function parseActions(text, tools) {
+    const obj = extractJsonBlock(text);
+    if (!obj) return [];
+    const list = Array.isArray(obj) ? obj : Array.isArray(obj.actions) ? obj.actions : (obj.tool || obj.name || obj.function) ? [obj] : [];
+    const names = new Set((tools || []).map((t) => (typeof t === 'string' ? t : t && t.function && t.function.name)).filter(Boolean));
+    return list.map((a, i) => {
+      const name = a.tool || a.name || a.function?.name || a.action;
+      let args = a.args || a.arguments || a.parameters || a.input || a.function?.arguments || {};
+      if (typeof args === 'string') args = safeJson(args);
+      return { id: 'j' + i, name, args };
+    }).filter((c) => names.has(c.name));
+  }
+
+  return { wantShot, trimHistory, clickAtText, linkItems, listify, salvageList, safeJson, extractJsonBlock, parseActions, SPARSE_TEXT, SPARSE_ELEMENTS };
 })();

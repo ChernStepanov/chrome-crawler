@@ -1801,51 +1801,13 @@ Reply with ONLY one JSON object, no markdown fences, no text around it:
 Put 1-12 actions per turn (they run in order). Available tools:
 ${toolDocs(tools)}`;
 
-function safeJson(s) { try { return JSON.parse(s || '{}'); } catch (e) { return {}; } }
-
-// Достаём первый сбалансированный JSON-объект/массив из текста ответа (режим «Команды в ответе»).
-function extractJsonBlock(text) {
-  if (!text) return null;
-  // «думающие» модели (qwen3, deepseek-r1) пишут рассуждения в <think>…</think>
-  let t = String(text).replace(/<think>[\s\S]*?<\/think>/gi, '');
-  if (t.includes('</think>')) t = t.slice(t.lastIndexOf('</think>') + 8);
-  t = t.trim().replace(/^```(?:json)?/i, '').replace(/```\s*$/, '').trim();
-  const start = t.search(/[\[{]/);
-  if (start < 0) return null;
-  const open = t[start], close = open === '{' ? '}' : ']';
-  let depth = 0, inStr = false, esc = false, end = -1;
-  for (let i = start; i < t.length; i++) {
-    const c = t[i];
-    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
-    if (c === '"') { inStr = true; continue; }
-    if (c === open) depth++;
-    else if (c === close && --depth === 0) { end = i; break; }
-  }
-  if (end < 0) return null;
-  try { return JSON.parse(t.slice(start, end + 1)); } catch (e) { return null; }
-}
-
-// Приводим сбалансированный JSON к списку вызовов инструментов
-function parseActions(text) {
-  const obj = extractJsonBlock(text);
-  if (!obj) return [];
-  const list = Array.isArray(obj) ? obj : Array.isArray(obj.actions) ? obj.actions : (obj.tool || obj.name || obj.function) ? [obj] : [];
-  const names = new Set(TOOLS.map((x) => x.function.name));
-  return list.map((a, i) => {
-    const name = a.tool || a.name || a.function?.name || a.action;
-    let args = a.args || a.arguments || a.parameters || a.input || a.function?.arguments || {};
-    if (typeof args === 'string') args = safeJson(args);
-    return { id: 'j' + i, name, args };
-  }).filter((c) => names.has(c.name));
-}
-
 // Размышления модели для лога «Действия»: <think>…</think> (reasoning-модели) или поле "thought"
 // из JSON-протокола. Не часть ответа пользователю — только для чтения/отладки.
 function extractThink(content, jsonMode) {
   const m = /<think>([\s\S]*?)<\/think>/i.exec(String(content || ''));
   if (m && m[1].trim()) return m[1].trim();
   if (jsonMode) {
-    const t = extractJsonBlock(content)?.thought;
+    const t = AgentLoop.extractJsonBlock(content)?.thought;
     if (typeof t === 'string' && t.trim()) return t.trim();
   }
   return '';
@@ -2441,7 +2403,7 @@ async function runTask() {
           try {
             const r = await callLLM(cfg, messages, abortCtl.signal, st, effortFor(cfg.think, step, st.hadProblem));
             if (cfg.toolMode === 'auto' && st.mode === 'native' && step === 1 &&
-                !r.msg.tool_calls?.length && !parseActions(r.msg.content).length) {
+                !r.msg.tool_calls?.length && !AgentLoop.parseActions(r.msg.content, st.tools).length) {
               switchToJson();
               continue;
             }
@@ -2479,8 +2441,8 @@ async function runTask() {
 
       const viaNative = !!msg.tool_calls?.length;
       const calls = viaNative
-        ? msg.tool_calls.map((c) => ({ id: c.id, name: c.function.name, args: safeJson(c.function.arguments) }))
-        : parseActions(msg.content);
+        ? msg.tool_calls.map((c) => ({ id: c.id, name: c.function.name, args: AgentLoop.safeJson(c.function.arguments) }))
+        : AgentLoop.parseActions(msg.content, st.tools);
       g.msgs.push(viaNative
         ? { role: 'assistant', content: msg.content ?? null, tool_calls: msg.tool_calls }
         : { role: 'assistant', content: msg.content || '' });

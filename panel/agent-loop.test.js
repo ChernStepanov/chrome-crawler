@@ -117,4 +117,21 @@ assert.match(L.clickAtText(5, 5, { ok: false }), /nothing was found at that poin
   assert.match(L.salvageList('Итог', '', '- A — 1 000 ₽\n- B — 2 000 ₽').answer, /^Итог\n- A — \*\*1 000 ₽\*\*\n- B/);
 }
 
+// ---- 7. «Команды в ответе»: разбор действий с учётом текущего набора инструментов ----
+{
+  const tools = [{ type: 'function', function: { name: 'write_script' } }, { type: 'function', function: { name: 'run_script' } }];
+  const json = '<think>план</think>```json\n{"thought":"пишу скрипт","actions":[{"tool":"write_script","args":{"title":"t","code":"return 1"}},{"tool":"click","args":{"id":1}},{"tool":"run_script","args":"{\\"id\\":\\"d1\\"}"}]}\n```';
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  const calls = L.parseActions(json, tools);
+  assert.deepEqual(plain(calls.map((c) => c.name)), ['write_script', 'run_script'], 'инструменты /skript не отбрасываются, чужие — отбрасываются');
+  assert.equal(calls[0].args.code, 'return 1');
+  assert.deepEqual(plain(calls[1].args), { id: 'd1' }, 'args-строка разбирается как JSON');
+  assert.equal(L.parseActions(json, ['screenshot_region']).length, 0, 'если инструмента нет в наборе — действие отброшено');
+  assert.deepEqual(plain(L.parseActions('[{"tool":"run_script","args":{}}]', ['run_script']).map((c) => c.name)), ['run_script'], 'верхнеуровневый массив');
+  assert.deepEqual(plain(L.parseActions('не JSON', tools)), [], 'текст без JSON — пусто');
+  assert.deepEqual(plain(L.safeJson('{"a":1}')), { a: 1 });
+  assert.deepEqual(plain(L.safeJson('{битый')), {}, 'битый JSON — пустой объект');
+  assert.equal(L.extractJsonBlock('до {"a":"}"} после').a, '}', 'фигурная скобка в строке не ломает баланс');
+}
+
 console.log('agent-loop.test.js: OK');
