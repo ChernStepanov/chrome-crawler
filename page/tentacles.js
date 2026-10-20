@@ -68,7 +68,23 @@
   // ---------- Цели ----------
   // Кандидаты: заметные элементы в видимой области. Крупные виды — картинки и карточки в приоритете,
   // «щупальца» (smooth) — любые «читаемые»: заголовки, цены, короткий текст.
-  function candidates(big) {
+  // Скан DOM дорогой (querySelectorAll по большому селектору + getBoundingClientRect на каждый элемент),
+  // а постоянный режим спрашивает цели каждые ~300 мс. Кэшируем список на CAND_TTL; у выбранных целей
+  // геометрия перечитывается заново (refresh), поэтому прокрутка не уводит щупальце в сторону.
+  const CAND_TTL = 900;
+  function makeCandCache(ttl) {
+    let at = -Infinity, key = null, list = null, scans = 0;
+    return {
+      get(k, build, now) {
+        if (list && k === key && now - at < ttl) return list;
+        list = build(); key = k; at = now; scans++;
+        return list;
+      },
+      get scans() { return scans; }
+    };
+  }
+  const candCache = makeCandCache(CAND_TTL);
+  function scanCandidates(big) {
     const W = innerWidth, H = innerHeight, out = [];
     const els = document.querySelectorAll('h1,h2,h3,h4,img,picture,video,figure,article,li,[class*="card" i],[class*="price" i],[class*="title" i],a,p,button,label');
     for (const el of els) {
@@ -85,13 +101,27 @@
     }
     return out.sort((a, b) => b.w - a.w);
   }
+  function candidates(big) { return candCache.get(big, () => scanCandidates(big), performance.now()); }
+  // Актуальная геометрия выбранной цели: кэш мог устареть (прокрутка, перерисовка). null — элемент ушёл.
+  function refresh(c) {
+    const r = c.el && c.el.isConnected ? c.el.getBoundingClientRect() : null;
+    if (!r || r.width < 4 || r.height < 4) return null;
+    if (r.bottom < 8 || r.top > innerHeight - 8 || r.right < 8 || r.left > innerWidth - 40) return null;
+    const x0 = Math.max(4, r.left), y0 = Math.max(4, r.top);
+    const g = { x: x0, y: y0, w: Math.min(GRAB_W, Math.min(innerWidth - 4, r.right) - x0), h: Math.min(GRAB_H, Math.min(innerHeight - 4, r.bottom) - y0) };
+    if (g.w < 24 || g.h < 10) return null;
+    return { ...c, rect: g, at: { x: r.left, y: r.top } };
+  }
   const overlaps = (a, b, pad) => a.x < b.x + b.w + pad && b.x < a.x + a.w + pad && a.y < b.y + b.h + pad && b.y < a.y + a.h + pad;
   // n целей, не налезающих на занятые
   function pick(n, busy) {
     const out = [];
-    for (const c of candidates(STYLES[style].big)) {
+    for (const raw of candidates(STYLES[style].big)) {
+      if (busy.some((b) => b.el === raw.el || overlaps(raw.rect, b.rect, 16)) || out.some((o) => overlaps(raw.rect, o.rect, 16))) continue;
+      if (recent.includes(raw.el) && Math.random() < 0.85) continue;
+      const c = refresh(raw);
+      if (!c) continue;
       if (busy.some((b) => b.el === c.el || overlaps(c.rect, b.rect, 16)) || out.some((o) => overlaps(c.rect, o.rect, 16))) continue;
-      if (recent.includes(c.el) && Math.random() < 0.85) continue;
       out.push(c);
       if (out.length >= n) break;
     }
@@ -508,6 +538,8 @@
   window.__crawlerSuck = {
     v: VERSION,
     styles: Object.keys(STYLES),
+    // для тестов: кэш кандидатов (сколько раз реально сканировали DOM)
+    _candCache: candCache,
     run, start, stop,
     timing: { suck: T_SUCK, retract: T_RETRACT, stagger: STAGGER },
     // перед снимком экрана: щупальца не должны попасть в то, что видит модель. Разовый заход — убрать совсем;
